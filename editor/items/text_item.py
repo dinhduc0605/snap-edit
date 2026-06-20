@@ -1,0 +1,204 @@
+"""
+text_item.py - Editable text annotation item.
+
+Double-click to enter edit mode; single-click to select and move.
+A semi-transparent rounded-rectangle background is painted behind the text.
+"""
+
+from PyQt6.QtCore import Qt, QRectF
+from PyQt6.QtGui import (
+    QPen, QBrush, QColor, QPainter, QFont, QTextCursor,
+)
+from PyQt6.QtWidgets import (
+    QGraphicsTextItem,
+    QGraphicsItem,
+    QGraphicsSceneMouseEvent,
+    QStyleOptionGraphicsItem,
+    QWidget,
+)
+
+
+# Default visual constants
+_DEFAULT_FONT_FAMILY = "Segoe UI"
+_DEFAULT_FONT_SIZE = 14
+_DEFAULT_TEXT_COLOR = QColor("#FF0000")
+_PLACEHOLDER = "Type here..."
+_BG_COLOR = QColor(255, 255, 255, 180)
+_BG_BORDER_COLOR = QColor(200, 200, 200, 120)
+_BG_RADIUS = 4.0
+
+
+class TextItem(QGraphicsTextItem):
+    """
+    An editable text annotation with a semi-transparent background.
+
+    * Double-click → enter edit mode (text cursor appears).
+    * Click / Escape → exit edit mode, item becomes movable.
+    * Placeholder text *"Type here…"* is shown on creation and removed on focus out.
+
+    Parameters
+    ----------
+    text_color : QColor
+        Initial text colour (default red).
+    font_size : int
+        Initial font point size (default 14).
+    parent : QGraphicsItem | None
+        Optional parent item.
+    """
+
+    def __init__(
+        self,
+        text_color: QColor = _DEFAULT_TEXT_COLOR,
+        font_size: int = _DEFAULT_FONT_SIZE,
+        parent: QGraphicsItem | None = None,
+    ) -> None:
+        super().__init__(parent)
+
+        self._text_color: QColor = QColor(text_color)
+        self._font_size: int = font_size
+        self._is_placeholder: bool = True
+
+        # Flags
+        self.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIsMovable, True)
+        self.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIsSelectable, True)
+
+        # Font
+        font = QFont(_DEFAULT_FONT_FAMILY, self._font_size)
+        font.setBold(True)
+        self.setFont(font)
+        self.setDefaultTextColor(self._text_color)
+
+        # Start with placeholder
+        self.setPlainText(_PLACEHOLDER)
+
+        # Enter edit mode immediately
+        self._enter_edit_mode()
+
+    # ------------------------------------------------------------------
+    # Properties
+    # ------------------------------------------------------------------
+
+    @property
+    def font_size(self) -> int:
+        return self._font_size
+
+    @property
+    def text_color(self) -> QColor:
+        return self._text_color
+
+    # ------------------------------------------------------------------
+    # Public API
+    # ------------------------------------------------------------------
+
+    def set_font_size(self, size: int) -> None:
+        """Change the font point size."""
+        self._font_size = max(6, size)
+        font = self.font()
+        font.setPointSize(self._font_size)
+        self.setFont(font)
+        self.update()
+
+    def set_text_color(self, color: QColor) -> None:
+        """Change the text colour."""
+        self._text_color = QColor(color)
+        self.setDefaultTextColor(self._text_color)
+        self.update()
+
+    # ------------------------------------------------------------------
+    # Edit-mode helpers
+    # ------------------------------------------------------------------
+
+    def _enter_edit_mode(self) -> None:
+        """Enable text editing and select all text."""
+        self.setTextInteractionFlags(
+            Qt.TextInteractionFlag.TextEditorInteraction
+        )
+        self.setFocus()
+        # Select all text
+        cursor = self.textCursor()
+        cursor.select(QTextCursor.SelectionType.Document)
+        self.setTextCursor(cursor)
+
+    def _exit_edit_mode(self) -> None:
+        """Disable text editing so the item can be moved."""
+        self.setTextInteractionFlags(
+            Qt.TextInteractionFlag.NoTextInteraction
+        )
+        # Clear selection
+        cursor = self.textCursor()
+        cursor.clearSelection()
+        self.setTextCursor(cursor)
+
+    # ------------------------------------------------------------------
+    # QGraphicsItem overrides
+    # ------------------------------------------------------------------
+
+    def boundingRect(self) -> QRectF:
+        """Slightly expanded rect to include the background padding."""
+        r = super().boundingRect()
+        padding = 4.0
+        return r.adjusted(-padding, -padding, padding, padding)
+
+    def paint(
+        self,
+        painter: QPainter,
+        option: QStyleOptionGraphicsItem,
+        widget: QWidget | None = None,
+    ) -> None:
+        """Draw background rect, then delegate text rendering to super."""
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+
+        # --- Background ---
+        bg_rect = super().boundingRect().adjusted(-2, -2, 2, 2)
+        painter.setPen(QPen(_BG_BORDER_COLOR, 1.0, Qt.PenStyle.SolidLine))
+        painter.setBrush(QBrush(_BG_COLOR))
+        painter.drawRoundedRect(bg_rect, _BG_RADIUS, _BG_RADIUS)
+
+        # --- Text ---
+        super().paint(painter, option, widget)
+
+    # ------------------------------------------------------------------
+    # Event overrides
+    # ------------------------------------------------------------------
+
+    def mouseDoubleClickEvent(self, event: QGraphicsSceneMouseEvent) -> None:
+        """Enter edit mode on double-click."""
+        if self._is_placeholder:
+            self._is_placeholder = False
+            self.setPlainText("")
+        self._enter_edit_mode()
+        super().mouseDoubleClickEvent(event)
+
+    def focusOutEvent(self, event) -> None:
+        """Exit edit mode when focus is lost."""
+        self._exit_edit_mode()
+
+        # If text is empty, restore placeholder
+        if not self.toPlainText().strip():
+            self._is_placeholder = True
+            self.setPlainText(_PLACEHOLDER)
+
+        super().focusOutEvent(event)
+
+    def keyPressEvent(self, event) -> None:
+        """Handle Escape key to exit edit mode."""
+        if event.key() == Qt.Key.Key_Escape:
+            self._exit_edit_mode()
+            self.clearFocus()
+            return
+        super().keyPressEvent(event)
+
+    def mousePressEvent(self, event: QGraphicsSceneMouseEvent) -> None:
+        """
+        If we are NOT in edit mode, accept the press for moving.
+        If we ARE in edit mode, let super handle cursor positioning.
+        """
+        if (
+            self.textInteractionFlags()
+            == Qt.TextInteractionFlag.NoTextInteraction
+        ):
+            # Not editing → handle move
+            super().mousePressEvent(event)
+        else:
+            # Editing → let text item handle cursor
+            super().mousePressEvent(event)
