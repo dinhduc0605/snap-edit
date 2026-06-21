@@ -22,8 +22,8 @@ from PyQt6.QtWidgets import (
 _DEFAULT_FONT_FAMILY = "Segoe UI"
 _DEFAULT_FONT_SIZE = 14
 _DEFAULT_TEXT_COLOR = QColor("#FF0000")
+_DEFAULT_BG_COLOR = QColor(255, 255, 255, 180)
 _PLACEHOLDER = "Type here..."
-_BG_COLOR = QColor(255, 255, 255, 180)
 _BG_BORDER_COLOR = QColor(200, 200, 200, 120)
 _BG_RADIUS = 4.0
 
@@ -42,6 +42,8 @@ class TextItem(QGraphicsTextItem):
         Initial text colour (default red).
     font_size : int
         Initial font point size (default 14).
+    bg_color : QColor
+        Background colour (default semi-transparent white).
     parent : QGraphicsItem | None
         Optional parent item.
     """
@@ -50,12 +52,14 @@ class TextItem(QGraphicsTextItem):
         self,
         text_color: QColor = _DEFAULT_TEXT_COLOR,
         font_size: int = _DEFAULT_FONT_SIZE,
+        bg_color: QColor = _DEFAULT_BG_COLOR,
         parent: QGraphicsItem | None = None,
     ) -> None:
         super().__init__(parent)
 
         self._text_color: QColor = QColor(text_color)
         self._font_size: int = font_size
+        self._bg_color: QColor = QColor(bg_color)
         self._is_placeholder: bool = True
 
         # Flags
@@ -86,6 +90,10 @@ class TextItem(QGraphicsTextItem):
     def text_color(self) -> QColor:
         return self._text_color
 
+    @property
+    def bg_color(self) -> QColor:
+        return self._bg_color
+
     # ------------------------------------------------------------------
     # Public API
     # ------------------------------------------------------------------
@@ -102,6 +110,11 @@ class TextItem(QGraphicsTextItem):
         """Change the text colour."""
         self._text_color = QColor(color)
         self.setDefaultTextColor(self._text_color)
+        self.update()
+
+    def set_bg_color(self, color: QColor) -> None:
+        """Change the background colour."""
+        self._bg_color = QColor(color)
         self.update()
 
     # ------------------------------------------------------------------
@@ -151,7 +164,7 @@ class TextItem(QGraphicsTextItem):
         # --- Background ---
         bg_rect = super().boundingRect().adjusted(-2, -2, 2, 2)
         painter.setPen(QPen(_BG_BORDER_COLOR, 1.0, Qt.PenStyle.SolidLine))
-        painter.setBrush(QBrush(_BG_COLOR))
+        painter.setBrush(QBrush(self._bg_color))
         painter.drawRoundedRect(bg_rect, _BG_RADIUS, _BG_RADIUS)
 
         # --- Text ---

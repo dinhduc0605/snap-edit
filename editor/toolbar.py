@@ -81,27 +81,23 @@ class Toolbar(QWidget):
     """
     Main toolbar for the editor.
     Emits signals when tool, color, or stroke size changes.
+
+    Layout order:
+      Select | Text [text color, text bg, text size] | Line Arrow Rect Ellipse | Bubble
+             | Color Size Fill | ... Undo Redo Copy Save
     """
 
-    tool_changed            = pyqtSignal(str)   # ToolType string
-    color_changed           = pyqtSignal(QColor)
-    stroke_width_changed    = pyqtSignal(int)
-    fill_changed            = pyqtSignal(bool)
-    undo_requested          = pyqtSignal()
-    redo_requested          = pyqtSignal()
-    save_file_requested     = pyqtSignal()
+    tool_changed             = pyqtSignal(str)   # ToolType string
+    color_changed            = pyqtSignal(QColor)
+    stroke_width_changed     = pyqtSignal(int)
+    fill_changed             = pyqtSignal(bool)
+    text_color_changed       = pyqtSignal(QColor)
+    text_bg_color_changed    = pyqtSignal(QColor)
+    text_size_changed        = pyqtSignal(int)
+    undo_requested           = pyqtSignal()
+    redo_requested           = pyqtSignal()
+    save_file_requested      = pyqtSignal()
     copy_clipboard_requested = pyqtSignal()
-
-    # (tool_type, fluent_icon_unicode, tooltip)
-    TOOL_DEFS = [
-        (ToolType.SELECT,  "\uE8B0", "Select (V)"),
-        (ToolType.TEXT,    "\uE8D2", "Text (T)"),
-        (ToolType.BUBBLE,  "①",      "Number Bubble (B)"),
-        (ToolType.LINE,    "—",      "Line (L)"),
-        (ToolType.ARROW,   "\uE72A", "Arrow (A)"),
-        (ToolType.RECT,    "\uE71A", "Rectangle (R)"),
-        (ToolType.ELLIPSE, "\uEA3A", "Ellipse (E)"),
-    ]
 
     def __init__(self, initial_color: QColor = QColor("#FF3B30"),
                  initial_width: int = 3, parent=None):
@@ -115,34 +111,84 @@ class Toolbar(QWidget):
         layout.setContentsMargins(8, 6, 8, 6)
         layout.setSpacing(4)
 
-        # --- Tool buttons ---
         self._button_group = QButtonGroup(self)
         self._button_group.setExclusive(True)
         self._tool_buttons: dict[str, QToolButton] = {}
 
-        for tool_type, emoji, tooltip in self.TOOL_DEFS:
-            if tool_type == ToolType.LINE:
-                layout.addWidget(self._create_separator())
+        # ── 1. Select tool ──────────────────────────────────────────────
+        btn = _make_btn("\uE8B0", "Select (V)", checkable=True)
+        self._button_group.addButton(btn)
+        self._tool_buttons[ToolType.SELECT] = btn
+        layout.addWidget(btn)
+
+        # ── separator ──
+        layout.addWidget(self._create_separator())
+
+        # ── 2. Text tool + text settings ────────────────────────────────
+        btn = _make_btn("\uE8D2", "Text (T)", checkable=True)
+        self._button_group.addButton(btn)
+        self._tool_buttons[ToolType.TEXT] = btn
+        layout.addWidget(btn)
+
+        # Text color button
+        self._text_color_btn = ColorButton(QColor("#FF0000"))
+        self._text_color_btn.setToolTip("Text Color")
+        self._text_color_btn.color_changed.connect(self.text_color_changed.emit)
+        layout.addWidget(self._text_color_btn)
+
+        # Text background color button (semi-transparent white by default)
+        self._text_bg_btn = ColorButton(QColor(255, 255, 255, 180))
+        self._text_bg_btn.setToolTip("Text Background Color")
+        self._text_bg_btn.color_changed.connect(self.text_bg_color_changed.emit)
+        layout.addWidget(self._text_bg_btn)
+
+        # Text size spinbox
+        self._text_size_spin = QSpinBox()
+        self._text_size_spin.setRange(6, 72)
+        self._text_size_spin.setValue(14)
+        self._text_size_spin.setSuffix("pt")
+        self._text_size_spin.setFixedWidth(70)
+        self._text_size_spin.setToolTip("Text Size")
+        self._text_size_spin.valueChanged.connect(self.text_size_changed.emit)
+        layout.addWidget(self._text_size_spin)
+
+        # ── separator ──
+        layout.addWidget(self._create_separator())
+
+        # ── 3. Shape tools: Line, Arrow, Rect, Ellipse ──────────────────
+        for tool_type, emoji, tooltip in [
+            (ToolType.LINE,    "—",      "Line (L)"),
+            (ToolType.ARROW,   "\uE72A", "Arrow (A)"),
+            (ToolType.RECT,    "\uE71A", "Rectangle (R)"),
+            (ToolType.ELLIPSE, "\uEA3A", "Ellipse (E)"),
+        ]:
             btn = _make_btn(emoji, tooltip, checkable=True)
             self._button_group.addButton(btn)
             self._tool_buttons[tool_type] = btn
             layout.addWidget(btn)
 
-        self._tool_buttons[ToolType.SELECT].setChecked(True)
-        self._button_group.buttonClicked.connect(self._on_tool_clicked)
-
-        # --- Separator before color/size/fill ---
+        # ── separator ──
         layout.addWidget(self._create_separator())
 
-        # --- Color picker ---
+        # ── 4. Bubble tool ──────────────────────────────────────────────
+        btn = _make_btn("①", "Number Bubble (B)", checkable=True)
+        self._button_group.addButton(btn)
+        self._tool_buttons[ToolType.BUBBLE] = btn
+        layout.addWidget(btn)
+
+        # ── separator before color/size/fill ────────────────────────────
+        layout.addWidget(self._create_separator())
+
+        # ── 5. Stroke color picker ──────────────────────────────────────
         self._color_button = ColorButton(initial_color)
+        self._color_button.setToolTip("Stroke Color")
         self._color_button.color_changed.connect(self.color_changed.emit)
         layout.addWidget(self._color_button)
 
-        # --- Separator ---
+        # ── separator ──
         layout.addWidget(self._create_separator())
 
-        # --- Stroke width ---
+        # ── 6. Stroke width ─────────────────────────────────────────────
         self._width_spin = QSpinBox()
         self._width_spin.setRange(1, 20)
         self._width_spin.setValue(initial_width)
@@ -151,18 +197,18 @@ class Toolbar(QWidget):
         self._width_spin.valueChanged.connect(self.stroke_width_changed.emit)
         layout.addWidget(self._width_spin)
 
-        # --- Fill Shape ---
+        # ── 7. Fill checkbox ─────────────────────────────────────────────
         self._fill_cb = QCheckBox("Fill")
         self._fill_cb.toggled.connect(self.fill_changed.emit)
         layout.addWidget(self._fill_cb)
 
-        # Right spacer to push actions to the right
+        # Right spacer
         layout.addStretch()
 
-        # --- Separator ---
+        # ── separator ────────────────────────────────────────────────────
         layout.addWidget(self._create_separator())
 
-        # --- Undo / Redo ---
+        # ── 8. Undo / Redo / Copy / Save ────────────────────────────────
         self._undo_btn = _make_btn("\uE7A7", "Undo (Ctrl+Z)")
         self._undo_btn.clicked.connect(self.undo_requested.emit)
         layout.addWidget(self._undo_btn)
@@ -171,7 +217,6 @@ class Toolbar(QWidget):
         self._redo_btn.clicked.connect(self.redo_requested.emit)
         layout.addWidget(self._redo_btn)
 
-        # --- Save / Clipboard ---
         self._clipboard_btn = _make_btn("\uE8C8", "Copy to Clipboard (Ctrl+C)")
         self._clipboard_btn.clicked.connect(self.copy_clipboard_requested.emit)
         layout.addWidget(self._clipboard_btn)
@@ -179,6 +224,10 @@ class Toolbar(QWidget):
         self._save_btn = _make_btn("\uE74E", "Save File (Ctrl+S)")
         self._save_btn.clicked.connect(self.save_file_requested.emit)
         layout.addWidget(self._save_btn)
+
+        # Select as default
+        self._tool_buttons[ToolType.SELECT].setChecked(True)
+        self._button_group.buttonClicked.connect(self._on_tool_clicked)
 
     def _create_separator(self) -> QFrame:
         sep = QFrame()
@@ -213,9 +262,12 @@ class Toolbar(QWidget):
             btn.setFixedSize(btn_size, btn_size)
             btn.setFont(fluent_font)
 
-        self._color_button.setFixedSize(int(24 * factor), int(24 * factor))
-        self._color_button.setIconSize(QSize(int(24 * factor), int(24 * factor)))
+        for color_btn in [self._color_button, self._text_color_btn, self._text_bg_btn]:
+            color_btn.setFixedSize(int(32 * factor), int(32 * factor))
+            color_btn.setIconSize(QSize(int(24 * factor), int(24 * factor)))
+
         self._width_spin.setFixedWidth(int(70 * factor))
+        self._text_size_spin.setFixedWidth(int(70 * factor))
 
         self.setStyleSheet(f"""
             Toolbar {{
@@ -271,34 +323,21 @@ class Toolbar(QWidget):
                 font-size: {font_size}px;
             }}
             QSpinBox::up-button, QSpinBox::down-button {{
-                background: #4A4A60;
-                width: 16px;
-            }}
-            QSpinBox::up-button {{
-                border-left: 1px solid #3A3A50;
-                border-bottom: 1px solid #3A3A50;
-                border-top-right-radius: 4px;
-            }}
-            QSpinBox::down-button {{
-                border-left: 1px solid #3A3A50;
-                border-bottom-right-radius: 4px;
-            }}
-            QSpinBox::up-arrow {{
-                image: none;
-            }}
-            QSpinBox::down-arrow {{
-                image: none;
-            }}
-            QSpinBox:focus {{
-                border-color: #7C5CFC;
-            }}
-            QSpinBox::up-button, QSpinBox::down-button {{
                 background: #2A2A3C;
                 border: none;
                 width: {int(16 * factor)}px;
             }}
+            QSpinBox::up-button {{
+                border-top-right-radius: 4px;
+            }}
+            QSpinBox::down-button {{
+                border-bottom-right-radius: 4px;
+            }}
             QSpinBox::up-button:hover, QSpinBox::down-button:hover {{
                 background: #7C5CFC;
+            }}
+            QSpinBox:focus {{
+                border-color: #7C5CFC;
             }}
             QLabel {{
                 color: #B0B0C0;

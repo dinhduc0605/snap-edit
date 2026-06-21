@@ -65,6 +65,9 @@ class AnnotationCanvas(QGraphicsScene):
         self._current_draw_item = None
         self._undo_stack = QUndoStack(self)
         self._fill_enabled = False
+        self._text_color = QColor("#FF0000")
+        self._text_bg_color = QColor(255, 255, 255, 180)
+        self._text_size = 14
 
         if pixmap:
             self.set_background(pixmap)
@@ -125,6 +128,27 @@ class AnnotationCanvas(QGraphicsScene):
         for item in self.selectedItems():
             if hasattr(item, 'set_fill_enabled'):
                 item.set_fill_enabled(enabled)
+
+    def set_text_color(self, color: QColor):
+        """Set the default text color for new text items."""
+        self._text_color = color
+        for item in self.selectedItems():
+            if hasattr(item, 'set_text_color'):
+                item.set_text_color(color)
+
+    def set_text_bg_color(self, color: QColor):
+        """Set the default text background color for new text items."""
+        self._text_bg_color = color
+        for item in self.selectedItems():
+            if hasattr(item, 'set_bg_color'):
+                item.set_bg_color(color)
+
+    def set_text_size(self, size: int):
+        """Set the default font size for new text items."""
+        self._text_size = size
+        for item in self.selectedItems():
+            if hasattr(item, 'set_font_size'):
+                item.set_font_size(size)
 
     @property
     def undo_stack(self) -> QUndoStack:
@@ -258,7 +282,7 @@ class AnnotationCanvas(QGraphicsScene):
     def _add_text(self, pos: QPointF):
         """Add a text item at the given position."""
         from editor.items.text_item import TextItem
-        item = TextItem(self._pen_color)
+        item = TextItem(self._text_color, self._text_size, self._text_bg_color)
         item.setPos(pos)
         cmd = AddItemCommand(self, item, "Add text")
         self._undo_stack.push(cmd)
