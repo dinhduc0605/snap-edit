@@ -2,14 +2,16 @@
 Canvas (QGraphicsScene) for the SnapEdit editor.
 Manages the background screenshot and all annotation items.
 """
-from PyQt6.QtCore import Qt, QRectF, QPointF, pyqtSignal
+from PyQt6.QtCore import Qt, QRectF, QPointF, pyqtSignal, QEvent
 from PyQt6.QtGui import (
     QPixmap, QPen, QColor, QPainter, QBrush, QKeySequence,
     QUndoStack, QUndoCommand
 )
 from PyQt6.QtWidgets import (
     QGraphicsScene, QGraphicsPixmapItem, QGraphicsView,
-    QGraphicsItem, QGraphicsDropShadowEffect
+    QGraphicsItem, QGraphicsDropShadowEffect, QMenu, QWidgetAction,
+    QWidget, QHBoxLayout, QLabel, QSpinBox, QColorDialog, QToolButton,
+    QDialog, QApplication, QVBoxLayout, QFrame
 )
 from editor.toolbar import ToolType
 
@@ -42,6 +44,120 @@ class RemoveItemCommand(QUndoCommand):
 
     def undo(self):
         self._scene.addItem(self._item)
+
+
+
+class TextSettingsPopup(QDialog):
+    """A custom frameless dialog for text settings that doesn't auto-close when dialogs open."""
+    
+    def __init__(self, item, parent=None):
+        super().__init__(parent)
+        self.item = item
+        self.setWindowFlags(Qt.WindowType.Tool | Qt.WindowType.FramelessWindowHint)
+        self.setStyleSheet("""
+            QDialog {
+                background: #2A2A3C;
+                border: 1px solid #3A3A50;
+                border-radius: 6px;
+            }
+            QLabel { color: #8A8AB0; font-size: 22px; padding: 4px 8px 2px 8px; }
+            QSpinBox {
+                background: #363650; border: 1px solid #3A3A50;
+                border-radius: 4px; color: #E0E0F0; padding: 3px; min-width: 120px;
+                font-size: 22px;
+            }
+            QToolButton {
+                background: transparent; border: 1px solid #3A3A50;
+                border-radius: 4px; color: #E0E0F0; padding: 4px 8px;
+                font-size: 22px;
+            }
+            QToolButton:hover { background: #3A3A50; }
+        """)
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(4, 4, 4, 4)
+        layout.setSpacing(4)
+
+        # --- Helper: build a widget action row ---
+        def _make_row(label_text, widget):
+            container = QWidget()
+            row = QHBoxLayout(container)
+            row.setContentsMargins(8, 4, 8, 4)
+            row.setSpacing(8)
+            lbl = QLabel(label_text)
+            lbl.setFixedWidth(150)
+            row.addWidget(lbl)
+            row.addWidget(widget)
+            return container
+
+        # --- Section title ---
+        title_container = QWidget()
+        title_layout = QHBoxLayout(title_container)
+        title_layout.setContentsMargins(8, 6, 8, 4)
+        title_lbl = QLabel("Text Settings")
+        title_lbl.setStyleSheet("color: #7C5CFC; font-weight: bold; font-size: 24px;")
+        title_layout.addWidget(title_lbl)
+        layout.addWidget(title_container)
+
+        # Draw a separator
+        sep = QFrame()
+        sep.setFrameShape(QFrame.Shape.HLine)
+        sep.setFrameShadow(QFrame.Shadow.Sunken)
+        sep.setStyleSheet("background-color: #3A3A50; max-height: 1px; border: none;")
+        layout.addWidget(sep)
+
+        # Helper: format QColor to CSS rgba
+        def _rgba_css(color):
+            return f"rgba({color.red()}, {color.green()}, {color.blue()}, {color.alpha() / 255.0})"
+
+        # --- Text color row ---
+        tc_btn = QToolButton()
+        tc_btn.setFixedSize(120, 40)
+        tc_btn.setStyleSheet(f"background: {_rgba_css(item.text_color)};")
+        tc_btn.setToolTip("Pick text color")
+        def _pick_text_color():
+            color = QColorDialog.getColor(item.text_color, self, "Text Color")
+            if color.isValid():
+                item.set_text_color(color)
+                tc_btn.setStyleSheet(f"background: {_rgba_css(color)};")
+        tc_btn.clicked.connect(_pick_text_color)
+        layout.addWidget(_make_row("Text Color:", tc_btn))
+
+        # --- Background color row ---
+        bg_btn = QToolButton()
+        bg_btn.setFixedSize(120, 40)
+        bg_btn.setStyleSheet(f"background: {_rgba_css(item.bg_color)};")
+        bg_btn.setToolTip("Pick background color")
+        def _pick_bg_color():
+            color = QColorDialog.getColor(
+                item.bg_color, self, "Background Color",
+                QColorDialog.ColorDialogOption.ShowAlphaChannel
+            )
+            if color.isValid():
+                item.set_bg_color(color)
+                bg_btn.setStyleSheet(f"background: {_rgba_css(color)};")
+        bg_btn.clicked.connect(_pick_bg_color)
+        layout.addWidget(_make_row("BG Color:", bg_btn))
+
+        # --- Text size row ---
+        size_spin = QSpinBox()
+        size_spin.setRange(6, 72)
+        size_spin.setValue(item.font_size)
+        size_spin.setSuffix(" pt")
+        size_spin.setFixedSize(120, 40)
+        def _apply_size(val):
+            item.set_font_size(val)
+        size_spin.valueChanged.connect(_apply_size)
+        layout.addWidget(_make_row("Text Size:", size_spin))
+
+    def changeEvent(self, event):
+        if event.type() == QEvent.Type.ActivationChange:
+            if not self.isActiveWindow():
+                active_win = QApplication.activeWindow()
+                if active_win and (active_win == self or active_win.parent() == self or isinstance(active_win, QColorDialog)):
+                    return
+                self.close()
+        super().changeEvent(event)
 
 
 class AnnotationCanvas(QGraphicsScene):
@@ -308,6 +424,30 @@ class AnnotationCanvas(QGraphicsScene):
         """Get all annotation items (excluding background)."""
         return [item for item in self.items()
                 if item is not self._background_item]
+
+    def contextMenuEvent(self, event):
+        """Show text settings context menu on right-click over a TextItem in Select mode."""
+        if self._current_tool != ToolType.SELECT:
+            super().contextMenuEvent(event)
+            return
+
+        from editor.items.text_item import TextItem
+        pos = event.scenePos()
+        item = self.itemAt(pos, __import__('PyQt6.QtGui', fromlist=['QTransform']).QTransform())
+
+        if not isinstance(item, TextItem):
+            super().contextMenuEvent(event)
+            return
+
+        # Ensure the item is selected
+        item.setSelected(True)
+
+        self._text_settings_popup = TextSettingsPopup(item, event.widget())
+        self._text_settings_popup.move(event.screenPos())
+        self._text_settings_popup.show()
+        self._text_settings_popup.raise_()
+        self._text_settings_popup.activateWindow()
+
 
 
 class CanvasView(QGraphicsView):
