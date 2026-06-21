@@ -90,17 +90,18 @@ class TextColorButton(QToolButton):
         pixmap.fill(Qt.GlobalColor.transparent)
         painter = QPainter(pixmap)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        painter.setRenderHint(QPainter.RenderHint.TextAntialiasing)
 
-        # Draw bold 'A' in current text color
-        font = QFont("Segoe UI", 15, QFont.Weight.Bold)
+        # Draw 'A' in current text color with a lighter, elegant font
+        font = QFont("Segoe UI", 14)
         painter.setFont(font)
         painter.setPen(self._color)
-        painter.drawText(0, 0, size, size - 4, Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignVCenter, "A")
+        painter.drawText(0, -2, size, size, Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignVCenter, "A")
 
-        # Draw underline color bar
+        # Draw thin underline color bar
         painter.setPen(Qt.PenStyle.NoPen)
         painter.setBrush(self._color)
-        painter.drawRect(2, size - 4, size - 4, 3)
+        painter.drawRect(4, size - 4, size - 8, 2)
 
         painter.end()
         self.setIcon(QIcon(pixmap))
