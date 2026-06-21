@@ -54,11 +54,11 @@ class EllipseItem(ResizableItem, QGraphicsEllipseItem):
 
     @property
     def fill_enabled(self) -> bool:
-        """Whether the interior has a semi-transparent fill."""
+        """Whether the interior has a fill."""
         return self._fill_enabled
 
     def set_fill_enabled(self, enabled: bool) -> None:
-        """Enable or disable the semi-transparent fill."""
+        """Enable or disable the fill."""
         self._fill_enabled = enabled
         self.update()
 
@@ -110,6 +110,7 @@ class EllipseItem(ResizableItem, QGraphicsEllipseItem):
         # --- Fill ---
         if self._fill_enabled:
             fill_color = QColor(self._pen_color)
+            fill_color.setAlpha(255)
             painter.setBrush(QBrush(fill_color))
         else:
             painter.setBrush(Qt.BrushStyle.NoBrush)

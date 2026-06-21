@@ -160,6 +160,128 @@ class TextSettingsPopup(QDialog):
         super().changeEvent(event)
 
 
+class ShapeSettingsPopup(QDialog):
+    """A custom frameless dialog for shape settings that doesn't auto-close when dialogs open."""
+    
+    def __init__(self, item, parent=None):
+        super().__init__(parent)
+        self.item = item
+        self.setWindowFlags(Qt.WindowType.Tool | Qt.WindowType.FramelessWindowHint)
+        self.setStyleSheet("""
+            QDialog {
+                background: #2A2A3C;
+                border: 1px solid #3A3A50;
+                border-radius: 6px;
+            }
+            QLabel { color: #8A8AB0; font-size: 22px; padding: 4px 8px 2px 8px; }
+            QSpinBox {
+                background: #363650; border: 1px solid #3A3A50;
+                border-radius: 4px; color: #E0E0F0; padding: 3px; min-width: 120px;
+                font-size: 22px;
+            }
+            QToolButton {
+                background: transparent; border: 1px solid #3A3A50;
+                border-radius: 4px; color: #E0E0F0; padding: 4px 8px;
+                font-size: 22px;
+            }
+            QToolButton:hover { background: #3A3A50; }
+            QCheckBox {
+                color: #8A8AB0;
+                font-size: 22px;
+                padding: 4px;
+            }
+            QCheckBox::indicator {
+                width: 24px;
+                height: 24px;
+                border: 1px solid #3A3A50;
+                background: #363650;
+                border-radius: 4px;
+            }
+            QCheckBox::indicator:checked {
+                background: #60CDFF;
+                border: 1px solid #60CDFF;
+            }
+        """)
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(4, 4, 4, 4)
+        layout.setSpacing(4)
+
+        def _make_row(label_text, widget):
+            container = QWidget()
+            row = QHBoxLayout(container)
+            row.setContentsMargins(8, 4, 8, 4)
+            row.setSpacing(8)
+            lbl = QLabel(label_text)
+            lbl.setFixedWidth(150)
+            row.addWidget(lbl)
+            row.addWidget(widget)
+            return container
+
+        # --- Section title ---
+        title_container = QWidget()
+        title_layout = QHBoxLayout(title_container)
+        title_layout.setContentsMargins(8, 6, 8, 4)
+        title_lbl = QLabel("Shape Settings")
+        title_lbl.setStyleSheet("color: #7C5CFC; font-weight: bold; font-size: 24px;")
+        title_layout.addWidget(title_lbl)
+        layout.addWidget(title_container)
+
+        sep = QFrame()
+        sep.setFrameShape(QFrame.Shape.HLine)
+        sep.setFrameShadow(QFrame.Shadow.Sunken)
+        sep.setStyleSheet("background-color: #3A3A50; max-height: 1px; border: none;")
+        layout.addWidget(sep)
+
+        def _rgba_css(color):
+            return f"rgba({color.red()}, {color.green()}, {color.blue()}, {color.alpha() / 255.0})"
+
+        # --- Stroke color row ---
+        sc_btn = QToolButton()
+        sc_btn.setFixedSize(120, 40)
+        sc_btn.setStyleSheet(f"background: {_rgba_css(item.pen_color)};")
+        sc_btn.setToolTip("Pick stroke color")
+        def _pick_stroke_color():
+            color = QColorDialog.getColor(item.pen_color, self, "Stroke Color")
+            if color.isValid():
+                item.set_pen_color(color)
+                sc_btn.setStyleSheet(f"background: {_rgba_css(color)};")
+        sc_btn.clicked.connect(_pick_stroke_color)
+        layout.addWidget(_make_row("Stroke Color:", sc_btn))
+
+        # --- Stroke size row ---
+        size_spin = QSpinBox()
+        size_spin.setRange(1, 40)
+        size_spin.setValue(item.pen_width)
+        size_spin.setSuffix(" px")
+        size_spin.setFixedSize(120, 40)
+        def _apply_size(val):
+            item.set_pen_width(val)
+        size_spin.valueChanged.connect(_apply_size)
+        layout.addWidget(_make_row("Stroke Size:", size_spin))
+
+        # --- Fill rows (if applicable) ---
+        if hasattr(item, 'fill_enabled'):
+            from PyQt6.QtWidgets import QCheckBox
+            fill_cb = QCheckBox("Enable Fill")
+            fill_cb.setChecked(item.fill_enabled)
+            
+            def _toggle_fill(checked):
+                item.set_fill_enabled(checked)
+            fill_cb.toggled.connect(_toggle_fill)
+            
+            layout.addWidget(_make_row("Fill:", fill_cb))
+
+    def changeEvent(self, event):
+        if event.type() == QEvent.Type.ActivationChange:
+            if not self.isActiveWindow():
+                active_win = QApplication.activeWindow()
+                if active_win and (active_win == self or active_win.parent() == self or isinstance(active_win, QColorDialog)):
+                    return
+                self.close()
+        super().changeEvent(event)
+
+
 class AnnotationCanvas(QGraphicsScene):
     """
     Custom QGraphicsScene that manages screenshot background
@@ -426,27 +548,38 @@ class AnnotationCanvas(QGraphicsScene):
                 if item is not self._background_item]
 
     def contextMenuEvent(self, event):
-        """Show text settings context menu on right-click over a TextItem in Select mode."""
+        """Show settings context menu on right-click over an item in Select mode."""
         if self._current_tool != ToolType.SELECT:
             super().contextMenuEvent(event)
             return
 
         from editor.items.text_item import TextItem
+        from editor.items.rect_item import RectItem
+        from editor.items.ellipse_item import EllipseItem
+        from editor.items.line_item import LineItem
+        from editor.items.arrow_item import ArrowItem
+
         pos = event.scenePos()
         item = self.itemAt(pos, __import__('PyQt6.QtGui', fromlist=['QTransform']).QTransform())
 
-        if not isinstance(item, TextItem):
-            super().contextMenuEvent(event)
+        if isinstance(item, TextItem):
+            item.setSelected(True)
+            self._settings_popup = TextSettingsPopup(item, event.widget())
+            self._settings_popup.move(event.screenPos())
+            self._settings_popup.show()
+            self._settings_popup.raise_()
+            self._settings_popup.activateWindow()
+            return
+        elif isinstance(item, (RectItem, EllipseItem, LineItem, ArrowItem)):
+            item.setSelected(True)
+            self._shape_settings_popup = ShapeSettingsPopup(item, event.widget())
+            self._shape_settings_popup.move(event.screenPos())
+            self._shape_settings_popup.show()
+            self._shape_settings_popup.raise_()
+            self._shape_settings_popup.activateWindow()
             return
 
-        # Ensure the item is selected
-        item.setSelected(True)
-
-        self._text_settings_popup = TextSettingsPopup(item, event.widget())
-        self._text_settings_popup.move(event.screenPos())
-        self._text_settings_popup.show()
-        self._text_settings_popup.raise_()
-        self._text_settings_popup.activateWindow()
+        super().contextMenuEvent(event)
 
 
 
