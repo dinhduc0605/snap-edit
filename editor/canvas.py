@@ -8,7 +8,7 @@ from PyQt6.QtGui import (
 )
 from PyQt6.QtWidgets import (
     QGraphicsScene, QGraphicsPixmapItem, QGraphicsView,
-    QGraphicsItem, QGraphicsDropShadowEffect,
+    QGraphicsItem,
     QWidget, QHBoxLayout, QLabel, QColorDialog, QToolButton,
     QDialog, QApplication, QVBoxLayout, QFrame
 )
@@ -372,13 +372,6 @@ class AnnotationCanvas(QGraphicsScene):
         self._background_item.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIsMovable, False)
         self._background_item.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIsSelectable, False)
         
-        # Add drop shadow for Snipping Tool aesthetic
-        shadow = QGraphicsDropShadowEffect()
-        shadow.setBlurRadius(20)
-        shadow.setColor(QColor(0, 0, 0, 150))
-        shadow.setOffset(0, 5)
-        self._background_item.setGraphicsEffect(shadow)
-
         self.addItem(self._background_item)
         self.setSceneRect(self._background_item.boundingRect())
 
@@ -656,6 +649,7 @@ class CanvasView(QGraphicsView):
         self._zoom = 1.0
         self._grab_mode = False
         self._prev_drag_mode = QGraphicsView.DragMode.NoDrag
+        self._pan_drag_active = False
         self.setStyleSheet("""
             QGraphicsView {
                 background: %s;
@@ -711,9 +705,35 @@ class CanvasView(QGraphicsView):
         """Zoom in/out with Ctrl+scroll."""
         if event.modifiers() & Qt.KeyboardModifier.ControlModifier:
             delta = event.angleDelta().y()
-            self._apply_zoom(1.15 if delta > 0 else 1 / 1.15)
+            if delta:
+                self._apply_zoom(1.15 if delta > 0 else 1 / 1.15)
+            event.accept()
         else:
             super().wheelEvent(event)
+
+    def mousePressEvent(self, event):
+        if (
+            event.button() == Qt.MouseButton.LeftButton
+            and self.dragMode() == QGraphicsView.DragMode.ScrollHandDrag
+        ):
+            self._pan_drag_active = True
+            # Fast resampling while the image is moving avoids expensive
+            # smooth scaling for every mouse-move repaint. Full-quality
+            # filtering is restored as soon as the drag finishes.
+            self.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform, False)
+        super().mousePressEvent(event)
+
+    def mouseReleaseEvent(self, event):
+        super().mouseReleaseEvent(event)
+        if event.button() == Qt.MouseButton.LeftButton and self._pan_drag_active:
+            self._finish_pan_drag()
+
+    def _finish_pan_drag(self):
+        if not self._pan_drag_active:
+            return
+        self._pan_drag_active = False
+        self.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform, True)
+        self.viewport().update()
 
     def keyPressEvent(self, event):
         if event.key() == Qt.Key.Key_Control and not event.isAutoRepeat():
@@ -724,7 +744,15 @@ class CanvasView(QGraphicsView):
     def keyReleaseEvent(self, event):
         if event.key() == Qt.Key.Key_Control and not event.isAutoRepeat():
             self.setDragMode(self._prev_drag_mode)
+            if not (QApplication.mouseButtons() & Qt.MouseButton.LeftButton):
+                self._finish_pan_drag()
         super().keyReleaseEvent(event)
+
+    def focusOutEvent(self, event):
+        """Restore normal rendering if the window loses focus mid-pan."""
+        self._finish_pan_drag()
+        super().focusOutEvent(event)
+
     def fit_in_view_nice(self):
         """Fit the scene in view with some padding."""
         if self.scene():
