@@ -15,6 +15,7 @@ SnapEdit is a lightweight, fast, and feature-rich screenshot capture and annotat
   - ① **Number Bubbles**: Add sequential numbered bubbles (1, 2, 3...) to create step-by-step guides effortlessly.
 - **Modern UI**: Dark-themed, sleek interface using PyQt6.
 - **Easy Export**: Save to PNG, JPG, BMP or automatically copy the annotated screenshot straight to your clipboard.
+- **Gallery**: Reopen one of the five most recent captures or any image from the configured save folder directly in the editor.
 
 ## 🚀 Installation & Setup
 
@@ -71,6 +72,7 @@ While the editor window is open, you can use these shortcuts to speed up your wo
 - `E`: Ellipse tool
 - `Ctrl + S`: Save Image
 - `Ctrl + C`: Copy to Clipboard
+- `Ctrl + G`: Open Gallery
 - `Ctrl + Z`: Undo
 - `Ctrl + Y`: Redo
 - `Delete` or `Backspace`: Delete selected annotation

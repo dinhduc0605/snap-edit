@@ -52,6 +52,7 @@ class SnapEditApp:
 
         self._config = Config()
         self._editor_window = None
+        self._recent_screenshots = []
         self._region_selector = None
         self._timed_region_selector = None
 
@@ -238,19 +239,33 @@ class SnapEditApp:
     def _on_timed_region_cancelled(self):
         self._timed_region_selector = None
 
-    def _open_editor(self, pixmap: QPixmap):
+    def _open_editor(self, pixmap: QPixmap, add_to_recent: bool = True):
         """Open the editor window with the captured screenshot."""
+        if add_to_recent:
+            self._recent_screenshots.insert(0, pixmap.copy())
+            del self._recent_screenshots[5:]
+
         # Close existing editor if open
         if self._editor_window:
             self._editor_window.close()
 
-        self._editor_window = EditorWindow(pixmap, self._config)
+        self._editor_window = EditorWindow(
+            pixmap,
+            self._config,
+            self._recent_screenshots,
+        )
         self._editor_window.closed.connect(self._on_editor_closed)
+        self._editor_window.gallery_image_selected.connect(
+            self._open_gallery_image
+        )
         self._editor_window.show()
         self._editor_window.activateWindow()
 
     def _on_editor_closed(self):
         self._editor_window = None
+
+    def _open_gallery_image(self, pixmap: QPixmap):
+        self._open_editor(pixmap, add_to_recent=False)
 
     def _open_settings(self):
         """Open the settings dialog."""

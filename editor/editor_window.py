@@ -10,10 +10,11 @@ from PyQt6.QtGui import (
 )
 from PyQt6.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout,
-    QFileDialog, QApplication, QStatusBar, QLabel
+    QFileDialog, QApplication, QStatusBar, QLabel, QDialog
 )
 from editor.toolbar import Toolbar, ToolType
 from editor.canvas import AnnotationCanvas, CanvasView
+from editor.gallery_dialog import GalleryDialog
 from settings.config import Config
 from theme import (
     BASE, BORDER_SUBTLE, TEXT_MUTED, TEXT_SECONDARY, TYPE_BODY_PT,
@@ -33,11 +34,16 @@ class EditorWindow(QMainWindow):
     """
 
     closed = pyqtSignal()
+    gallery_image_selected = pyqtSignal(QPixmap)
 
-    def __init__(self, pixmap: QPixmap, config: Config, parent=None):
+    def __init__(self, pixmap: QPixmap, config: Config,
+                 recent_screenshots=None, parent=None):
         super().__init__(parent)
         self._config = config
         self._pixmap = pixmap
+        self._recent_screenshots = (
+            recent_screenshots if recent_screenshots is not None else []
+        )
         self._setup_window()
         self._setup_ui()
         self._setup_shortcuts()
@@ -155,6 +161,7 @@ class EditorWindow(QMainWindow):
         # Save / Copy
         QShortcut(QKeySequence.StandardKey.Save, self).activated.connect(self._save_file)
         QShortcut(QKeySequence.StandardKey.Copy, self).activated.connect(self._copy_clipboard)
+        QShortcut(QKeySequence("Ctrl+G"), self).activated.connect(self._open_gallery)
 
         # Delete
         QShortcut(QKeySequence(Qt.Key.Key_Delete), self).activated.connect(self._canvas.delete_selected)
@@ -172,6 +179,18 @@ class EditorWindow(QMainWindow):
         self._toolbar.redo_requested.connect(self._canvas.redo)
         self._toolbar.save_file_requested.connect(self._save_file)
         self._toolbar.copy_clipboard_requested.connect(self._copy_clipboard)
+        self._toolbar.gallery_requested.connect(self._open_gallery)
+
+    def _open_gallery(self):
+        dialog = GalleryDialog(
+            self._recent_screenshots,
+            self._config.save_directory,
+            self,
+        )
+        if dialog.exec() == QDialog.DialogCode.Accepted:
+            pixmap = dialog.selected_pixmap
+            if pixmap and not pixmap.isNull():
+                self.gallery_image_selected.emit(pixmap)
 
     def _save_file(self):
         """Save the annotated screenshot to a file."""

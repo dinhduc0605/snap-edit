@@ -86,6 +86,15 @@ def _toolbar_icon(name: str, size: int = 24) -> QIcon:
     elif name == "copy":
         painter.drawRoundedRect(QRectF(7.0, 4.0, 11.0, 13.0), 1.5, 1.5)
         painter.drawRoundedRect(QRectF(4.0, 7.0, 11.0, 12.0), 1.5, 1.5)
+    elif name == "gallery":
+        painter.drawRoundedRect(QRectF(3.0, 4.0, 16.0, 14.0), 1.5, 1.5)
+        painter.drawEllipse(QRectF(13.5, 6.5, 2.5, 2.5))
+        landscape = QPainterPath(QPointF(5.0, 15.5))
+        landscape.lineTo(9.0, 11.0)
+        landscape.lineTo(11.5, 13.5)
+        landscape.lineTo(14.0, 10.5)
+        landscape.lineTo(17.0, 15.5)
+        painter.drawPath(landscape)
     elif name == "save":
         painter.drawRoundedRect(QRectF(4.0, 3.0, 14.0, 16.0), 1.5, 1.5)
         painter.drawRect(QRectF(7.0, 3.0, 7.5, 5.0))
@@ -244,6 +253,7 @@ class Toolbar(QWidget):
     redo_requested           = pyqtSignal()
     save_file_requested      = pyqtSignal()
     copy_clipboard_requested = pyqtSignal()
+    gallery_requested        = pyqtSignal()
 
     def __init__(self, initial_color: QColor = QColor("#FF3B30"),
                  initial_width: int = 3, parent=None):
@@ -357,6 +367,10 @@ class Toolbar(QWidget):
         self._clipboard_btn.clicked.connect(self.copy_clipboard_requested.emit)
         layout.addWidget(self._clipboard_btn)
 
+        self._gallery_btn = _make_btn("gallery", "Gallery (Ctrl+G)")
+        self._gallery_btn.clicked.connect(self.gallery_requested.emit)
+        layout.addWidget(self._gallery_btn)
+
         self._save_btn = _make_btn("save", "Save file (Ctrl+S)")
         self._save_btn.clicked.connect(self.save_file_requested.emit)
         layout.addWidget(self._save_btn)
@@ -417,7 +431,8 @@ class Toolbar(QWidget):
         btn_size = int(44 * factor)
         icon_size = max(20, int(24 * factor))
         icon_buttons = list(self._tool_buttons.values()) + [
-            self._undo_btn, self._redo_btn, self._clipboard_btn, self._save_btn,
+            self._undo_btn, self._redo_btn, self._clipboard_btn,
+            self._gallery_btn, self._save_btn,
         ]
         for btn in icon_buttons:
             btn.setFixedSize(btn_size, btn_size)
