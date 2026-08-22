@@ -19,7 +19,7 @@ Classes:
 import mss
 from PIL import Image
 
-from PyQt6.QtCore import Qt, pyqtSignal, QRect, QPoint
+from PyQt6.QtCore import Qt, pyqtSignal, QRect, QPoint, QEventLoop
 from PyQt6.QtGui import (
     QPixmap, QImage, QPainter, QColor, QCursor, QPen, QFont,
     QFontMetrics, QRegion
@@ -92,6 +92,7 @@ class RegionSelector(QWidget):
         self._selection_rect = QRect() # The normalized selection rectangle
         self._desktop_pixmap = QPixmap()
         self._dimmed_pixmap = QPixmap()
+        self._first_drag_frame = False
 
         # Configure window flags for frameless, always-on-top overlay
         self.setWindowFlags(
@@ -118,6 +119,12 @@ class RegionSelector(QWidget):
         self.show()
         self.activateWindow()
         self.raise_()
+        # Ensure the native window and its first full backing-store frame are
+        # ready before a fast first drag can request partial repaints.
+        QApplication.processEvents(
+            QEventLoop.ProcessEventsFlag.ExcludeUserInputEvents
+        )
+        self.repaint()
 
     def _get_virtual_geometry(self) -> QRect:
         """Calculate the bounding rectangle spanning all screens.
@@ -278,6 +285,7 @@ class RegionSelector(QWidget):
             self._current = event.pos()
             self._selecting = True
             self._selection_rect = QRect()
+            self._first_drag_frame = True
             self.update()
 
     def mouseMoveEvent(self, event):
@@ -289,7 +297,16 @@ class RegionSelector(QWidget):
                 self._origin, self._current
             ).normalized()
             self._selection_rect = new_rect
-            self._update_selection_delta(old_rect, new_rect)
+            if self._first_drag_frame and new_rect.isValid():
+                self._first_drag_frame = False
+                # Render the first visible selection synchronously. Later
+                # moves use the cheaper delta-based repaint path.
+                first_dirty = new_rect.adjusted(-3, -3, 3, 3).united(
+                    self._dimension_label_rect(new_rect).adjusted(-2, -2, 2, 2)
+                )
+                self.repaint(first_dirty)
+            else:
+                self._update_selection_delta(old_rect, new_rect)
 
     def _update_selection_delta(self, old_rect: QRect, new_rect: QRect):
         """Repaint only changed fill, border, and label pixels."""
