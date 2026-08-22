@@ -16,6 +16,7 @@ SnapEdit is a lightweight, fast, and feature-rich screenshot capture and annotat
 - **Modern UI**: Dark-themed, sleek interface using PyQt6.
 - **Easy Export**: Save to PNG, JPG, BMP or automatically copy the annotated screenshot straight to your clipboard.
 - **Gallery**: Reopen one of the five most recent captures or any image from the configured save folder directly in the editor.
+- **Windows Integration**: Optionally start SnapEdit when signing in and prevent duplicate app instances.
 
 ## 🚀 Installation & Setup
 

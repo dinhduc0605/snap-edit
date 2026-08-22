@@ -17,7 +17,6 @@ Classes:
     RegionSelector: The interactive overlay widget.
 """
 import mss
-from PIL import Image
 
 from PyQt6.QtCore import Qt, pyqtSignal, QRect, QPoint, QEventLoop
 from PyQt6.QtGui import (
@@ -25,27 +24,6 @@ from PyQt6.QtGui import (
     QFontMetrics, QRegion
 )
 from PyQt6.QtWidgets import QWidget, QApplication
-
-
-def pil_to_qpixmap(pil_image: Image.Image) -> QPixmap:
-    """Convert a PIL Image to a QPixmap.
-
-    Args:
-        pil_image: The source PIL Image to convert.
-
-    Returns:
-        A QPixmap containing the image data.
-    """
-    if pil_image.mode != 'RGBA':
-        pil_image = pil_image.convert('RGBA')
-    data = pil_image.tobytes('raw', 'RGBA')
-    qimage = QImage(
-        data,
-        pil_image.width,
-        pil_image.height,
-        QImage.Format.Format_RGBA8888
-    )
-    return QPixmap.fromImage(qimage)
 
 
 class RegionSelector(QWidget):
@@ -124,7 +102,6 @@ class RegionSelector(QWidget):
         QApplication.processEvents(
             QEventLoop.ProcessEventsFlag.ExcludeUserInputEvents
         )
-        self.repaint()
 
     def _get_virtual_geometry(self) -> QRect:
         """Calculate the bounding rectangle spanning all screens.
@@ -299,12 +276,20 @@ class RegionSelector(QWidget):
             self._selection_rect = new_rect
             if self._first_drag_frame and new_rect.isValid():
                 self._first_drag_frame = False
-                # Render the first visible selection synchronously. Later
-                # moves use the cheaper delta-based repaint path.
-                first_dirty = new_rect.adjusted(-3, -3, 3, 3).united(
-                    self._dimension_label_rect(new_rect).adjusted(-2, -2, 2, 2)
+                # Paint only the thin border and label synchronously so the
+                # first visual feedback is immediate even for a 4K region.
+                outer = QRegion(new_rect.adjusted(-3, -3, 3, 3))
+                inner = QRegion(new_rect.adjusted(3, 3, -3, -3))
+                first_visual = outer.subtracted(inner).united(
+                    QRegion(
+                        self._dimension_label_rect(new_rect).adjusted(
+                            -2, -2, 2, 2
+                        )
+                    )
                 )
-                self.repaint(first_dirty)
+                self.repaint(first_visual)
+                # Restore the undimmed selection interior asynchronously.
+                self.update(QRegion(new_rect).united(first_visual))
             else:
                 self._update_selection_delta(old_rect, new_rect)
 
@@ -389,13 +374,14 @@ class RegionSelector(QWidget):
                 }
                 screenshot = sct.grab(region)
 
-                pil_image = Image.frombytes(
-                    'RGB',
-                    (screenshot.width, screenshot.height),
-                    screenshot.rgb
-                )
-
-                return pil_to_qpixmap(pil_image)
+                image = QImage(
+                    screenshot.bgra,
+                    screenshot.width,
+                    screenshot.height,
+                    screenshot.width * 4,
+                    QImage.Format.Format_ARGB32,
+                ).copy()
+                return QPixmap.fromImage(image)
 
         except Exception as e:
             print(f"[SnapEdit] Region capture failed: {e}")

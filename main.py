@@ -35,6 +35,7 @@ from theme import (
     ACCENT, BASE, BORDER, HOVER, SURFACE, SURFACE_ALT, TEXT_PRIMARY,
     TYPE_BODY_PT,
 )
+from windows_integration import SingleInstanceLock, show_already_running_message
 
 
 class SnapEditApp:
@@ -242,7 +243,9 @@ class SnapEditApp:
     def _open_editor(self, pixmap: QPixmap, add_to_recent: bool = True):
         """Open the editor window with the captured screenshot."""
         if add_to_recent:
-            self._recent_screenshots.insert(0, pixmap.copy())
+            # QPixmap is implicitly shared; avoid a full deep copy of a large
+            # screenshot on the UI thread before opening the editor.
+            self._recent_screenshots.insert(0, QPixmap(pixmap))
             del self._recent_screenshots[5:]
 
         # Close existing editor if open
@@ -289,9 +292,17 @@ class SnapEditApp:
 
 
 def main():
+    instance_lock = SingleInstanceLock()
+    if not instance_lock.acquire():
+        show_already_running_message()
+        return
 
-    app = SnapEditApp()
-    sys.exit(app.run())
+    try:
+        app = SnapEditApp()
+        exit_code = app.run()
+    finally:
+        instance_lock.release()
+    sys.exit(exit_code)
 
 
 if __name__ == "__main__":

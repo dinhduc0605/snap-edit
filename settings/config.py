@@ -16,6 +16,7 @@ DEFAULT_CONFIG = {
     "save_directory": str(Path.home() / "Pictures" / "SnapEdit"),
     "default_format": "png",
     "auto_copy_clipboard": False,
+    "start_with_windows": False,
     "stroke_color": "#FF3B30",
     "stroke_width": 3,
     "bubble_color": "#FF3B30",

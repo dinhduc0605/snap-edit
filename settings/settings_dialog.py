@@ -9,7 +9,7 @@ from PyQt6.QtWidgets import (
     QPushButton, QComboBox, QCheckBox,
     QWidget, QFileDialog, QKeySequenceEdit,
     QGroupBox, QFormLayout, QColorDialog, QListWidget,
-    QStackedWidget, QFrame,
+    QStackedWidget, QFrame, QMessageBox,
 )
 from ui_widgets import FluentSpinBox
 
@@ -19,6 +19,9 @@ from theme import (
     BORDER_SUBTLE, CONTROL_RADIUS, HOVER, OVERLAY_RADIUS, PRESSED,
     SURFACE, SURFACE_ALT, TEXT_MUTED, TEXT_PRIMARY, TEXT_SECONDARY,
     TYPE_BODY_PT, TYPE_CAPTION_PT, TYPE_DISPLAY_PT, TYPE_TITLE_PT,
+)
+from windows_integration import (
+    is_startup_enabled, set_startup_enabled, startup_is_supported,
 )
 
 
@@ -248,7 +251,9 @@ class SettingsDialog(QDialog):
         header_layout.setSpacing(2)
         title = QLabel("Settings")
         title.setObjectName("settingsTitle")
-        subtitle = QLabel("Customize capture, storage, and drawing defaults")
+        subtitle = QLabel(
+            "Customize startup, capture, storage, and drawing defaults"
+        )
         subtitle.setObjectName("settingsSubtitle")
         header_layout.addWidget(title)
         header_layout.addWidget(subtitle)
@@ -262,7 +267,7 @@ class SettingsDialog(QDialog):
         self._nav = QListWidget()
         self._nav.setFixedWidth(168)
         self._nav.setSpacing(0)
-        self._nav.addItems(["Hotkeys", "Storage", "Drawing"])
+        self._nav.addItems(["General", "Hotkeys", "Storage", "Drawing"])
         self._nav.setAccessibleName("Settings sections")
         body_layout.addWidget(self._nav)
 
@@ -270,6 +275,7 @@ class SettingsDialog(QDialog):
         body_layout.addWidget(self._stack, 1)
         root.addWidget(body, 1)
 
+        self._build_general_tab()
         self._build_hotkeys_tab()
         self._build_storage_tab()
         self._build_drawing_tab()
@@ -345,6 +351,43 @@ class SettingsDialog(QDialog):
         form.addRow(QLabel("Full screen"), self._hk_fullscreen)
         form.addRow(QLabel("Region"), self._hk_region)
         form.addRow(QLabel("Timed region"), self._hk_timed_region)
+
+        layout.addWidget(group)
+        layout.addStretch()
+        self._stack.addWidget(tab)
+
+    def _build_general_tab(self):
+        """Build application-level Windows settings."""
+        tab = QWidget()
+        layout = QVBoxLayout(tab)
+        layout.setContentsMargins(8, 4, 8, 8)
+        layout.setSpacing(8)
+        self._add_page_header(
+            layout,
+            "General",
+            "Control how SnapEdit starts and behaves on Windows.",
+        )
+
+        group = QGroupBox("Startup")
+        group_layout = QVBoxLayout(group)
+        group_layout.setContentsMargins(20, 18, 20, 18)
+        group_layout.setSpacing(6)
+
+        self._startup_cb = QCheckBox("Start SnapEdit when Windows starts")
+        self._startup_cb.setMinimumHeight(32)
+        self._startup_cb.setAccessibleName("Start SnapEdit when Windows starts")
+        group_layout.addWidget(self._startup_cb)
+
+        description = QLabel(
+            "SnapEdit will start in the system tray after you sign in."
+        )
+        description.setObjectName("pageDescription")
+        description.setWordWrap(True)
+        group_layout.addWidget(description)
+
+        if not startup_is_supported():
+            self._startup_cb.setEnabled(False)
+            self._startup_cb.setToolTip("This option is only available on Windows")
 
         layout.addWidget(group)
         layout.addStretch()
@@ -442,6 +485,8 @@ class SettingsDialog(QDialog):
         """Populate all widgets from the current Config values."""
         hotkeys = self._config.hotkeys
 
+        self._startup_cb.setChecked(is_startup_enabled())
+
         self._hk_fullscreen.setKeySequence(
             QKeySequence.fromString(self._format_hotkey_display(hotkeys.get("fullscreen", "")))
         )
@@ -499,6 +544,19 @@ class SettingsDialog(QDialog):
 
     def _on_save(self):
         """Persist all widget values into Config and close."""
+        try:
+            set_startup_enabled(self._startup_cb.isChecked())
+        except OSError as exc:
+            QMessageBox.critical(
+                self,
+                "Could not update startup setting",
+                f"SnapEdit could not update the Windows startup entry.\n\n{exc}",
+            )
+            return
+        self._config.set(
+            "start_with_windows", self._startup_cb.isChecked()
+        )
+
         # Hotkeys
         self._config.set(
             "hotkeys.fullscreen",
@@ -530,3 +588,4 @@ class SettingsDialog(QDialog):
         """Reset config to factory defaults and reload the UI."""
         self._config.reset_to_defaults()
         self._load_from_config()
+        self._startup_cb.setChecked(False)
