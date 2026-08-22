@@ -17,6 +17,13 @@ from editor.canvas import AnnotationCanvas, CanvasView
 from settings.config import Config
 
 
+_FALLBACK_EDITOR_WIDTH = 1200
+_FALLBACK_EDITOR_HEIGHT = 800
+_MIN_EDITOR_WIDTH = 640
+_MIN_EDITOR_HEIGHT = 480
+_EDITOR_SCREEN_RATIO = 0.8
+
+
 class EditorWindow(QMainWindow):
     """
     Screenshot editor window with annotation tools.
@@ -35,18 +42,21 @@ class EditorWindow(QMainWindow):
 
     def _setup_window(self):
         self.setWindowTitle("SnapEdit — Editor")
-        self.setMinimumSize(800, 600)
-        # Size window to fit screenshot but not exceed screen
+        self.setMinimumSize(_MIN_EDITOR_WIDTH, _MIN_EDITOR_HEIGHT)
+
+        # Keep the initial editor size independent of screenshot dimensions.
+        w = _FALLBACK_EDITOR_WIDTH
+        h = _FALLBACK_EDITOR_HEIGHT
         screen = QApplication.primaryScreen()
         if screen:
             screen_rect = screen.availableGeometry()
-            w = min(self._pixmap.width() + 60, screen_rect.width() - 100)
-            h = min(self._pixmap.height() + 120, screen_rect.height() - 100)
-            self.resize(w, h)
-            # Center on screen
+            w = round(screen_rect.width() * _EDITOR_SCREEN_RATIO)
+            h = round(screen_rect.height() * _EDITOR_SCREEN_RATIO)
+
             x = (screen_rect.width() - w) // 2 + screen_rect.x()
             y = (screen_rect.height() - h) // 2 + screen_rect.y()
             self.move(x, y)
+        self.resize(w, h)
 
         self.setStyleSheet("""
             QMainWindow {

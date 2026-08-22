@@ -31,6 +31,24 @@ class AddItemCommand(QUndoCommand):
         self._scene.removeItem(self._item)
 
 
+class AddBubbleCommand(AddItemCommand):
+    """Undoable bubble addition that keeps numbering in sync."""
+
+    def __init__(self, scene: 'AnnotationCanvas', item: QGraphicsItem, number: int):
+        super().__init__(scene, item, f"Add bubble #{number}")
+        self._number = number
+
+    def redo(self):
+        super().redo()
+        self._scene._bubble_counter = self._number
+        self._scene.bubble_count_changed.emit(self._number)
+
+    def undo(self):
+        super().undo()
+        self._scene._bubble_counter = self._number - 1
+        self._scene.bubble_count_changed.emit(self._scene._bubble_counter)
+
+
 class RemoveItemCommand(QUndoCommand):
     """Undo command for removing an annotation item."""
 
@@ -509,12 +527,11 @@ class AnnotationCanvas(QGraphicsScene):
     def _add_bubble(self, pos: QPointF):
         """Add a numbered bubble at the given position."""
         from editor.items.bubble_item import BubbleItem
-        self._bubble_counter += 1
-        item = BubbleItem(self._bubble_counter, self._pen_color)
+        number = self._bubble_counter + 1
+        item = BubbleItem(number, self._pen_color)
         item.setPos(pos.x() - 16, pos.y() - 16)
-        cmd = AddItemCommand(self, item, f"Add bubble #{self._bubble_counter}")
+        cmd = AddBubbleCommand(self, item, number)
         self._undo_stack.push(cmd)
-        self.bubble_count_changed.emit(self._bubble_counter)
         self.item_added.emit()
 
     def _add_text(self, pos: QPointF):

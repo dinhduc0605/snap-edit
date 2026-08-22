@@ -21,7 +21,8 @@ from PIL import Image
 
 from PyQt6.QtCore import Qt, pyqtSignal, QRect, QPoint
 from PyQt6.QtGui import (
-    QPixmap, QImage, QPainter, QColor, QCursor, QPen, QFont
+    QPixmap, QImage, QPainter, QColor, QCursor, QPen, QFont,
+    QFontMetrics, QRegion
 )
 from PyQt6.QtWidgets import QWidget, QApplication
 
@@ -89,6 +90,8 @@ class RegionSelector(QWidget):
         self._current = QPoint()       # Current mouse position
         self._selecting = False        # Whether a drag is in progress
         self._selection_rect = QRect() # The normalized selection rectangle
+        self._desktop_pixmap = QPixmap()
+        self._dimmed_pixmap = QPixmap()
 
         # Configure window flags for frameless, always-on-top overlay
         self.setWindowFlags(
@@ -96,7 +99,9 @@ class RegionSelector(QWidget):
             | Qt.WindowType.WindowStaysOnTopHint
             | Qt.WindowType.Tool
         )
-        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
+        # This widget paints a cached desktop image, so it can stay opaque and
+        # avoid expensive full-screen translucent composition while dragging.
+        self.setAttribute(Qt.WidgetAttribute.WA_OpaquePaintEvent)
         self.setCursor(QCursor(Qt.CursorShape.CrossCursor))
         self.setMouseTracking(True)
 
@@ -109,6 +114,7 @@ class RegionSelector(QWidget):
         # Calculate the combined geometry of all screens
         virtual_geometry = self._get_virtual_geometry()
         self.setGeometry(virtual_geometry)
+        self._cache_desktop(virtual_geometry)
         self.show()
         self.activateWindow()
         self.raise_()
@@ -134,6 +140,37 @@ class RegionSelector(QWidget):
 
         return combined
 
+    def _cache_desktop(self, geometry: QRect):
+        """Capture and pre-dim the desktop once before showing the overlay."""
+        try:
+            with mss.mss() as sct:
+                screenshot = sct.grab({
+                    'left': geometry.x(),
+                    'top': geometry.y(),
+                    'width': geometry.width(),
+                    'height': geometry.height(),
+                })
+                image = QImage(
+                    screenshot.bgra,
+                    screenshot.width,
+                    screenshot.height,
+                    screenshot.width * 4,
+                    # MSS exposes BGRA bytes. On Windows, ARGB32's native
+                    # little-endian byte order is BGRA in memory.
+                    QImage.Format.Format_ARGB32,
+                ).copy()
+
+            self._desktop_pixmap = QPixmap.fromImage(image)
+            self._dimmed_pixmap = self._desktop_pixmap.copy()
+            painter = QPainter(self._dimmed_pixmap)
+            painter.fillRect(self._dimmed_pixmap.rect(), self._OVERLAY_COLOR)
+            painter.end()
+        except Exception as exc:
+            # Keep a functional (plain dim) selector if preview capture fails.
+            print(f"[SnapEdit] Desktop preview failed: {exc}")
+            self._desktop_pixmap = QPixmap()
+            self._dimmed_pixmap = QPixmap()
+
     # ── Qt Event Handlers ──────────────────────────────────────────────
 
     def paintEvent(self, event):
@@ -141,22 +178,21 @@ class RegionSelector(QWidget):
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
 
-        # Draw the dim overlay across the entire widget
-        painter.fillRect(self.rect(), self._OVERLAY_COLOR)
+        # Qt clips these draws to event.region(), so pointer movement copies
+        # only pixels whose selected/unselected state actually changed.
+        dirty_rect = event.rect()
+        if not self._dimmed_pixmap.isNull():
+            painter.drawPixmap(dirty_rect, self._dimmed_pixmap, dirty_rect)
+        else:
+            painter.fillRect(dirty_rect, self._OVERLAY_COLOR)
 
         if self._selecting and self._selection_rect.isValid():
             rect = self._selection_rect
 
-            # Clear the selected region (punch a hole through the overlay)
-            painter.setCompositionMode(
-                QPainter.CompositionMode.CompositionMode_Clear
-            )
-            painter.fillRect(rect, Qt.GlobalColor.transparent)
-
-            # Switch back to normal composition for the border
-            painter.setCompositionMode(
-                QPainter.CompositionMode.CompositionMode_SourceOver
-            )
+            # Restore cached, undimmed pixels instead of asking the desktop
+            # compositor to process a translucent full-screen window.
+            if not self._desktop_pixmap.isNull():
+                painter.drawPixmap(rect, self._desktop_pixmap, rect)
 
             # Draw selection border
             pen = QPen(self._BORDER_COLOR, 2, Qt.PenStyle.SolidLine)
@@ -167,6 +203,41 @@ class RegionSelector(QWidget):
             self._draw_dimension_label(painter, rect)
 
         painter.end()
+
+    def _dimension_label_rect(self, rect: QRect) -> QRect:
+        """Return the pixels occupied by the live dimension label."""
+        font = QFont("Segoe UI", 11, QFont.Weight.Bold)
+        metrics = QFontMetrics(font, self)
+        label_text = f"{rect.width()} × {rect.height()}"
+        padding = 6
+        text_w = max(
+            metrics.horizontalAdvance(label_text),
+            metrics.boundingRect(label_text).width(),
+        )
+        label_w = text_w + padding * 2
+        label_h = metrics.height() + padding * 2
+        gap = 6
+
+        # Align to the selection's right edge, then clamp to both horizontal
+        # edges of the overlay.
+        max_x = max(0, self.width() - label_w)
+        label_x = max(0, min(rect.right() - label_w + 1, max_x))
+
+        below_y = rect.bottom() + gap + 1
+        above_y = rect.top() - label_h - gap
+        max_y = max(0, self.height() - label_h)
+
+        if below_y <= max_y:
+            label_y = below_y
+        elif above_y >= 0:
+            label_y = above_y
+        else:
+            # A tall selection may leave no room outside. Put the label just
+            # inside its bottom edge and keep it fully within the overlay.
+            inside_y = rect.bottom() - label_h - gap + 1
+            label_y = max(0, min(inside_y, max_y))
+
+        return QRect(label_x, label_y, label_w, label_h)
 
     def _draw_dimension_label(self, painter: QPainter, rect: QRect):
         """Draw a WxH dimension label near the selection rectangle.
@@ -185,28 +256,9 @@ class RegionSelector(QWidget):
         # Configure font
         font = QFont("Segoe UI", 11, QFont.Weight.Bold)
         painter.setFont(font)
-        metrics = painter.fontMetrics()
-
-        text_width = metrics.horizontalAdvance(label_text)
-        text_height = metrics.height()
-        padding = 6
-
-        # Label dimensions
-        label_w = text_width + padding * 2
-        label_h = text_height + padding * 2
-
-        # Position: below and to the right of the selection bottom-right
-        label_x = rect.right() - label_w
-        label_y = rect.bottom() + 6
-
-        # If label goes off-screen, move it above the selection
-        if label_y + label_h > self.height():
-            label_y = rect.top() - label_h - 6
-        if label_x < 0:
-            label_x = rect.left()
 
         # Draw label background
-        label_rect = QRect(label_x, label_y, label_w, label_h)
+        label_rect = self._dimension_label_rect(rect)
         painter.setPen(Qt.PenStyle.NoPen)
         painter.setBrush(self._LABEL_BG_COLOR)
         painter.drawRoundedRect(label_rect, 4, 4)
@@ -226,16 +278,33 @@ class RegionSelector(QWidget):
             self._current = event.pos()
             self._selecting = True
             self._selection_rect = QRect()
-            self.repaint()
+            self.update()
 
     def mouseMoveEvent(self, event):
         """Handle mouse move to update the selection rectangle."""
         if self._selecting:
+            old_rect = self._selection_rect
             self._current = event.pos()
-            self._selection_rect = QRect(
+            new_rect = QRect(
                 self._origin, self._current
             ).normalized()
-            self.repaint()
+            self._selection_rect = new_rect
+            self._update_selection_delta(old_rect, new_rect)
+
+    def _update_selection_delta(self, old_rect: QRect, new_rect: QRect):
+        """Repaint only changed fill, border, and label pixels."""
+        dirty = QRegion(old_rect).xored(QRegion(new_rect))
+
+        for rect in (old_rect, new_rect):
+            if not rect.isValid():
+                continue
+            outer = QRegion(rect.adjusted(-3, -3, 3, 3))
+            inner = QRegion(rect.adjusted(3, 3, -3, -3))
+            dirty = dirty.united(outer.subtracted(inner))
+            label_dirty = self._dimension_label_rect(rect).adjusted(-2, -2, 2, 2)
+            dirty = dirty.united(QRegion(label_dirty))
+
+        self.update(dirty)
 
     def mouseReleaseEvent(self, event):
         """Handle mouse release to finalize and capture the selected region."""

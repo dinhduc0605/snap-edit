@@ -74,9 +74,10 @@ class TextItem(QGraphicsTextItem):
 
         # Start with placeholder
         self.setPlainText(_PLACEHOLDER)
+        self.document().contentsChanged.connect(self._sync_placeholder_state)
 
         # Enter edit mode immediately
-        self._enter_edit_mode()
+        self._enter_edit_mode(select_all=True)
 
     # ------------------------------------------------------------------
     # Properties
@@ -121,16 +122,21 @@ class TextItem(QGraphicsTextItem):
     # Edit-mode helpers
     # ------------------------------------------------------------------
 
-    def _enter_edit_mode(self) -> None:
-        """Enable text editing and select all text."""
+    def _sync_placeholder_state(self) -> None:
+        """Mark edited placeholder content as real text."""
+        if self._is_placeholder and self.toPlainText() != _PLACEHOLDER:
+            self._is_placeholder = False
+
+    def _enter_edit_mode(self, select_all: bool = False) -> None:
+        """Enable text editing without selecting existing content."""
         self.setTextInteractionFlags(
             Qt.TextInteractionFlag.TextEditorInteraction
         )
         self.setFocus()
-        # Select all text
-        cursor = self.textCursor()
-        cursor.select(QTextCursor.SelectionType.Document)
-        self.setTextCursor(cursor)
+        if select_all:
+            cursor = self.textCursor()
+            cursor.select(QTextCursor.SelectionType.Document)
+            self.setTextCursor(cursor)
 
     def _exit_edit_mode(self) -> None:
         """Disable text editing so the item can be moved."""
@@ -176,11 +182,19 @@ class TextItem(QGraphicsTextItem):
 
     def mouseDoubleClickEvent(self, event: QGraphicsSceneMouseEvent) -> None:
         """Enter edit mode on double-click."""
-        if self._is_placeholder:
+        if self._is_placeholder and self.toPlainText() == _PLACEHOLDER:
             self._is_placeholder = False
             self.setPlainText("")
+        else:
+            self._is_placeholder = False
         self._enter_edit_mode()
         super().mouseDoubleClickEvent(event)
+
+        # QGraphicsTextItem selects the word under a double-click. Clear that
+        # selection so the next key press inserts text instead of replacing it.
+        cursor = self.textCursor()
+        cursor.clearSelection()
+        self.setTextCursor(cursor)
 
     def focusOutEvent(self, event) -> None:
         """Exit edit mode when focus is lost."""

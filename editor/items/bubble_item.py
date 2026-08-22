@@ -8,7 +8,7 @@ A drop shadow gives the bubble a premium, elevated look.
 from PyQt6.QtCore import Qt, QRectF, QPointF
 from PyQt6.QtGui import (
     QPen, QBrush, QColor, QPainter, QPainterPath,
-    QFont, QFontMetrics,
+    QFont,
 )
 from PyQt6.QtWidgets import (
     QGraphicsItem,
@@ -25,7 +25,8 @@ _SHADOW_OFFSET = QPointF(2.0, 2.0)
 _SHADOW_COLOR = QColor(0, 0, 0, 80)
 _TEXT_COLOR = QColor(255, 255, 255)
 _FONT_FAMILY = "Segoe UI"
-_FONT_SIZE = 12
+_FONT_PIXEL_SIZE = 16
+_TEXT_MAX_WIDTH = _BUBBLE_SIZE - 8.0
 
 
 class BubbleItem(QGraphicsItem):
@@ -138,19 +139,30 @@ class BubbleItem(QGraphicsItem):
             ))
 
         # --- Number text ---
-        font = QFont(_FONT_FAMILY, _FONT_SIZE)
-        font.setBold(True)
-        painter.setFont(font)
-        painter.setPen(QPen(_TEXT_COLOR))
-
         text = str(self._number)
-        fm = QFontMetrics(font)
-        text_rect = fm.boundingRect(text)
+        font = QFont(_FONT_FAMILY)
+        font.setPixelSize(_FONT_PIXEL_SIZE)
+        font.setBold(True)
 
-        # Centre the text in the bubble
-        cx = _BUBBLE_SIZE / 2.0
-        cy = _BUBBLE_SIZE / 2.0
-        x = cx - text_rect.width() / 2.0
-        y = cy + fm.ascent() / 2.0 - fm.descent() / 2.0
+        # Build a glyph path so centering uses the visible strokes instead of
+        # the font's advance widths (notably important for "1" in 10, 11...).
+        text_path = QPainterPath()
+        text_path.addText(QPointF(0.0, 0.0), font, text)
+        text_bounds = text_path.boundingRect()
 
-        painter.drawText(QPointF(x, y), text)
+        # Keep multi-digit labels comfortably inside the fixed-size bubble.
+        if text_bounds.width() > _TEXT_MAX_WIDTH:
+            fitted_size = max(
+                8,
+                int(_FONT_PIXEL_SIZE * _TEXT_MAX_WIDTH / text_bounds.width()),
+            )
+            font.setPixelSize(fitted_size)
+            text_path = QPainterPath()
+            text_path.addText(QPointF(0.0, 0.0), font, text)
+            text_bounds = text_path.boundingRect()
+
+        bubble_center = QPointF(_BUBBLE_SIZE / 2.0, _BUBBLE_SIZE / 2.0)
+        painter.save()
+        painter.translate(bubble_center - text_bounds.center())
+        painter.fillPath(text_path, QBrush(_TEXT_COLOR))
+        painter.restore()
