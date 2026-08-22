@@ -10,7 +10,8 @@ from pathlib import Path
 DEFAULT_CONFIG = {
     "hotkeys": {
         "fullscreen": "alt+shift+1",
-        "region": "alt+shift+2"
+        "region": "alt+shift+2",
+        "timed_region": "alt+shift+3"
     },
     "save_directory": str(Path.home() / "Pictures" / "SnapEdit"),
     "default_format": "png",

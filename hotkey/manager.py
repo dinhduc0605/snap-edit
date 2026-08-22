@@ -41,6 +41,7 @@ class HotkeyManager(QObject):
 
     fullscreen_triggered = pyqtSignal()
     region_triggered = pyqtSignal()
+    timed_region_triggered = pyqtSignal()
 
     def __init__(self, config: Config, parent: Optional[QObject] = None):
         super().__init__(parent)
@@ -64,6 +65,8 @@ class HotkeyManager(QObject):
                        self.fullscreen_triggered, "fullscreen")
         self._register(bindings, hotkeys.get("region", ""),
                        self.region_triggered, "region")
+        self._register(bindings, hotkeys.get("timed_region", ""),
+                       self.timed_region_triggered, "timed region")
 
         if not bindings:
             logger.warning("No valid hotkeys configured – listener not started.")

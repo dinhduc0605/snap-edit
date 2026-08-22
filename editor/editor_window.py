@@ -16,7 +16,7 @@ from editor.toolbar import Toolbar, ToolType
 from editor.canvas import AnnotationCanvas, CanvasView
 from settings.config import Config
 from theme import (
-    BASE, BORDER_SUBTLE, TEXT_MUTED, TEXT_SECONDARY,
+    BASE, BORDER_SUBTLE, TEXT_MUTED, TEXT_SECONDARY, TYPE_BODY_PT,
 )
 
 
@@ -70,14 +70,17 @@ class EditorWindow(QMainWindow):
                 color: %s;
                 border-top: 1px solid %s;
                 font-family: 'Segoe UI Variable', 'Segoe UI';
-                font-size: 13px;
+                font-size: %dpt;
                 padding: 0 8px;
             }
             QStatusBar QLabel {
                 color: %s;
                 padding: 0 4px;
             }
-        """ % (BASE, BASE, TEXT_SECONDARY, BORDER_SUBTLE, TEXT_SECONDARY))
+        """ % (
+            BASE, BASE, TEXT_SECONDARY, BORDER_SUBTLE, TYPE_BODY_PT,
+            TEXT_SECONDARY,
+        ))
 
     def resizeEvent(self, event):
         if hasattr(self, "_hint_label"):

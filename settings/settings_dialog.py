@@ -340,9 +340,11 @@ class SettingsDialog(QDialog):
 
         self._hk_fullscreen = QKeySequenceEdit()
         self._hk_region = QKeySequenceEdit()
+        self._hk_timed_region = QKeySequenceEdit()
 
         form.addRow(QLabel("Full screen"), self._hk_fullscreen)
         form.addRow(QLabel("Region"), self._hk_region)
+        form.addRow(QLabel("Timed region"), self._hk_timed_region)
 
         layout.addWidget(group)
         layout.addStretch()
@@ -446,6 +448,11 @@ class SettingsDialog(QDialog):
         self._hk_region.setKeySequence(
             QKeySequence.fromString(self._format_hotkey_display(hotkeys.get("region", "")))
         )
+        self._hk_timed_region.setKeySequence(
+            QKeySequence.fromString(
+                self._format_hotkey_display(hotkeys.get("timed_region", ""))
+            )
+        )
 
         self._save_dir_edit.setText(self._config.save_directory)
 
@@ -500,6 +507,10 @@ class SettingsDialog(QDialog):
         self._config.set(
             "hotkeys.region",
             self._format_hotkey_store(self._hk_region.keySequence()),
+        )
+        self._config.set(
+            "hotkeys.timed_region",
+            self._format_hotkey_store(self._hk_timed_region.keySequence()),
         )
 
         # Storage

@@ -28,6 +28,7 @@ from settings.config import Config
 from hotkey.manager import HotkeyManager
 from capture.fullscreen import capture_fullscreen
 from capture.region import RegionSelector
+from capture.timed_region import TimedRegionSelector
 from editor.editor_window import EditorWindow
 from settings.settings_dialog import SettingsDialog
 from theme import (
@@ -44,7 +45,7 @@ class SnapEditApp:
         self._app.setQuitOnLastWindowClosed(False)
         self._app.setApplicationName("SnapEdit")
         self._app.setStyle("Fusion")
-        self._app.setFont(QFont("Segoe UI Variable", 11))
+        self._app.setFont(QFont("Segoe UI Variable", TYPE_BODY_PT))
 
         # Apply dark palette globally
         self._apply_dark_palette()
@@ -52,6 +53,7 @@ class SnapEditApp:
         self._config = Config()
         self._editor_window = None
         self._region_selector = None
+        self._timed_region_selector = None
 
         self._setup_tray()
         self._setup_hotkeys()
@@ -146,6 +148,10 @@ class SnapEditApp:
         region_action.triggered.connect(self._capture_region)
         menu.addAction(region_action)
 
+        timed_region_action = QAction("Timed region capture", menu)
+        timed_region_action.triggered.connect(self._capture_timed_region)
+        menu.addAction(timed_region_action)
+
         menu.addSeparator()
 
         # Settings
@@ -168,9 +174,7 @@ class SnapEditApp:
         # Show startup notification
         self._tray.showMessage(
             "SnapEdit is running",
-            "The application is running in the system tray.\n"
-            f"Fullscreen: {self._config.get('hotkeys.fullscreen', 'Alt+Shift+1')}\n"
-            f"Region: {self._config.get('hotkeys.region', 'Alt+Shift+2')}",
+            "The application is running in the system tray.",
             QSystemTrayIcon.MessageIcon.Information,
             3000
         )
@@ -179,6 +183,9 @@ class SnapEditApp:
         self._hotkey_manager = HotkeyManager(self._config)
         self._hotkey_manager.fullscreen_triggered.connect(self._capture_fullscreen)
         self._hotkey_manager.region_triggered.connect(self._capture_region)
+        self._hotkey_manager.timed_region_triggered.connect(
+            self._capture_timed_region
+        )
         self._hotkey_manager.start()
 
     def _capture_fullscreen(self):
@@ -207,6 +214,30 @@ class SnapEditApp:
         if pixmap and not pixmap.isNull():
             self._open_editor(pixmap)
 
+    def _capture_timed_region(self):
+        """Open the timed region selector after the tray menu closes."""
+        QTimer.singleShot(200, self._do_timed_region_capture)
+
+    def _do_timed_region_capture(self):
+        if self._timed_region_selector:
+            self._timed_region_selector.close()
+        self._timed_region_selector = TimedRegionSelector()
+        self._timed_region_selector.region_captured.connect(
+            self._on_timed_region_captured
+        )
+        self._timed_region_selector.selection_cancelled.connect(
+            self._on_timed_region_cancelled
+        )
+        self._timed_region_selector.start()
+
+    def _on_timed_region_captured(self, pixmap: QPixmap):
+        self._timed_region_selector = None
+        if pixmap and not pixmap.isNull():
+            self._open_editor(pixmap)
+
+    def _on_timed_region_cancelled(self):
+        self._timed_region_selector = None
+
     def _open_editor(self, pixmap: QPixmap):
         """Open the editor window with the captured screenshot."""
         # Close existing editor if open
@@ -231,6 +262,8 @@ class SnapEditApp:
 
     def _quit(self):
         """Clean up and exit."""
+        if self._timed_region_selector:
+            self._timed_region_selector.close()
         self._hotkey_manager.stop()
         self._tray.hide()
         QApplication.quit()
