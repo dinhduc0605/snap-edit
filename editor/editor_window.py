@@ -4,17 +4,20 @@ Combines toolbar, canvas, and provides save/export functionality.
 """
 import os
 from datetime import datetime
-from PyQt6.QtCore import Qt, pyqtSignal, QSize
+from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtGui import (
-    QPixmap, QKeySequence, QShortcut, QIcon, QColor, QAction
+    QPixmap, QKeySequence, QShortcut, QColor
 )
 from PyQt6.QtWidgets import (
-    QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
+    QMainWindow, QWidget, QVBoxLayout,
     QFileDialog, QApplication, QStatusBar, QLabel
 )
 from editor.toolbar import Toolbar, ToolType
 from editor.canvas import AnnotationCanvas, CanvasView
 from settings.config import Config
+from theme import (
+    BASE, BORDER_SUBTLE, TEXT_MUTED, TEXT_SECONDARY,
+)
 
 
 _FALLBACK_EDITOR_WIDTH = 1200
@@ -60,18 +63,25 @@ class EditorWindow(QMainWindow):
 
         self.setStyleSheet("""
             QMainWindow {
-                background: #202020;
+                background: %s;
             }
             QStatusBar {
-                background: #202020;
-                color: #8080A0;
-                border-top: 1px solid #333333;
-                font-size: 12px;
-                padding: 2px 8px;
+                background: %s;
+                color: %s;
+                border-top: 1px solid %s;
+                font-family: 'Segoe UI Variable', 'Segoe UI';
+                font-size: 13px;
+                padding: 0 8px;
             }
-        """)
+            QStatusBar QLabel {
+                color: %s;
+                padding: 0 4px;
+            }
+        """ % (BASE, BASE, TEXT_SECONDARY, BORDER_SUBTLE, TEXT_SECONDARY))
 
     def resizeEvent(self, event):
+        if hasattr(self, "_hint_label"):
+            self._hint_label.setVisible(event.size().width() >= 900)
         super().resizeEvent(event)
 
     def _setup_ui(self):
@@ -96,13 +106,19 @@ class EditorWindow(QMainWindow):
 
         # Status bar
         self._statusbar = QStatusBar()
+        self._statusbar.setFixedHeight(28)
         self.setStatusBar(self._statusbar)
-        self._status_label = QLabel(
-            f"Size: {self._pixmap.width()} × {self._pixmap.height()}px  |  "
-            "V: Select  |  Ctrl+Scroll / ±: Zoom  Ctrl+0: Fit  |  "
-            "Ctrl+Z/Y: Undo/Redo  |  Del: Delete  |  Ctrl+S: Save  Ctrl+C: Copy"
+        self._size_label = QLabel(
+            f"{self._pixmap.width()} × {self._pixmap.height()} px"
         )
-        self._statusbar.addWidget(self._status_label)
+        self._size_label.setAccessibleName("Image dimensions")
+        self._statusbar.addWidget(self._size_label)
+
+        self._hint_label = QLabel(
+            "V Select   ·   Ctrl+wheel Zoom   ·   Ctrl+Z Undo   ·   Del Delete"
+        )
+        self._hint_label.setStyleSheet(f"color: {TEXT_MUTED};")
+        self._statusbar.addPermanentWidget(self._hint_label)
 
         # Fit after layout
         from PyQt6.QtCore import QTimer
@@ -168,14 +184,14 @@ class EditorWindow(QMainWindow):
         if file_path:
             pixmap = self._canvas.export_to_pixmap()
             pixmap.save(file_path)
-            self._statusbar.showMessage(f"✅ Saved to: {file_path}", 5000)
+            self._statusbar.showMessage(f"Saved to {file_path}", 5000)
 
     def _copy_clipboard(self):
         """Copy the annotated screenshot to clipboard."""
         pixmap = self._canvas.export_to_pixmap()
         clipboard = QApplication.clipboard()
         clipboard.setPixmap(pixmap)
-        self._statusbar.showMessage("📋 Copied to clipboard!", 3000)
+        self._statusbar.showMessage("Copied to clipboard", 3000)
 
     def closeEvent(self, event):
         self.closed.emit()

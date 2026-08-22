@@ -4,16 +4,92 @@ Manages the background screenshot and all annotation items.
 """
 from PyQt6.QtCore import Qt, QRectF, QPointF, pyqtSignal, QEvent
 from PyQt6.QtGui import (
-    QPixmap, QPen, QColor, QPainter, QBrush, QKeySequence,
-    QUndoStack, QUndoCommand
+    QPixmap, QColor, QPainter, QUndoStack, QUndoCommand
 )
 from PyQt6.QtWidgets import (
     QGraphicsScene, QGraphicsPixmapItem, QGraphicsView,
-    QGraphicsItem, QGraphicsDropShadowEffect, QMenu, QWidgetAction,
-    QWidget, QHBoxLayout, QLabel, QSpinBox, QColorDialog, QToolButton,
+    QGraphicsItem, QGraphicsDropShadowEffect,
+    QWidget, QHBoxLayout, QLabel, QColorDialog, QToolButton,
     QDialog, QApplication, QVBoxLayout, QFrame
 )
+from ui_widgets import FluentSpinBox
 from editor.toolbar import ToolType
+from theme import (
+    ACCENT, BASE, BORDER, BORDER_SUBTLE, CONTENT, CONTROL_RADIUS,
+    HOVER, OVERLAY_RADIUS, SURFACE, SURFACE_ALT, TEXT_PRIMARY,
+    TEXT_SECONDARY, TYPE_BODY_PT, TYPE_SUBTITLE_PT,
+)
+
+
+_POPUP_STYLESHEET = f"""
+    QDialog {{
+        background: {SURFACE};
+        border: 1px solid {BORDER};
+        border-radius: {OVERLAY_RADIUS}px;
+        color: {TEXT_PRIMARY};
+        font-family: 'Segoe UI Variable', 'Segoe UI';
+        font-size: {TYPE_BODY_PT}pt;
+    }}
+    QLabel {{
+        color: {TEXT_SECONDARY};
+        font-size: {TYPE_BODY_PT}pt;
+    }}
+    QLabel#popupTitle {{
+        color: {TEXT_PRIMARY};
+        font-size: {TYPE_SUBTITLE_PT}pt;
+        font-weight: 600;
+    }}
+    QSpinBox {{
+        background: {SURFACE_ALT};
+        border: 1px solid {BORDER};
+        border-radius: {CONTROL_RADIUS}px;
+        color: {TEXT_PRIMARY};
+        padding: 6px 10px;
+        font-size: {TYPE_BODY_PT}pt;
+    }}
+    QSpinBox:focus {{ border-color: {ACCENT}; }}
+    QSpinBox::up-button, QSpinBox::down-button {{
+        background: {SURFACE};
+        border: none;
+        width: 22px;
+    }}
+    QSpinBox::up-button {{ border-top-right-radius: {CONTROL_RADIUS}px; }}
+    QSpinBox::down-button {{ border-bottom-right-radius: {CONTROL_RADIUS}px; }}
+    QSpinBox::up-button:hover, QSpinBox::down-button:hover {{
+        background: {HOVER};
+    }}
+    QSpinBox::up-arrow, QSpinBox::down-arrow {{
+        image: none;
+        width: 0px;
+        height: 0px;
+        border: none;
+    }}
+    QToolButton {{
+        background: {SURFACE_ALT};
+        border: 1px solid {BORDER};
+        border-radius: {CONTROL_RADIUS}px;
+        color: {TEXT_PRIMARY};
+        padding: 6px 10px;
+        font-size: {TYPE_BODY_PT}pt;
+    }}
+    QToolButton:hover {{ background: {HOVER}; }}
+    QCheckBox {{
+        color: {TEXT_PRIMARY};
+        spacing: 8px;
+        font-size: {TYPE_BODY_PT}pt;
+    }}
+    QCheckBox::indicator {{
+        width: 16px;
+        height: 16px;
+        border: 1px solid {BORDER};
+        background: {SURFACE_ALT};
+        border-radius: 3px;
+    }}
+    QCheckBox::indicator:checked {{
+        background: {ACCENT};
+        border-color: {ACCENT};
+    }}
+"""
 
 
 class AddItemCommand(QUndoCommand):
@@ -72,38 +148,21 @@ class TextSettingsPopup(QDialog):
         super().__init__(parent)
         self.item = item
         self.setWindowFlags(Qt.WindowType.Tool | Qt.WindowType.FramelessWindowHint)
-        self.setStyleSheet("""
-            QDialog {
-                background: #2A2A3C;
-                border: 1px solid #3A3A50;
-                border-radius: 6px;
-            }
-            QLabel { color: #8A8AB0; font-size: 22px; padding: 4px 8px 2px 8px; }
-            QSpinBox {
-                background: #363650; border: 1px solid #3A3A50;
-                border-radius: 4px; color: #E0E0F0; padding: 3px; min-width: 120px;
-                font-size: 22px;
-            }
-            QToolButton {
-                background: transparent; border: 1px solid #3A3A50;
-                border-radius: 4px; color: #E0E0F0; padding: 4px 8px;
-                font-size: 22px;
-            }
-            QToolButton:hover { background: #3A3A50; }
-        """)
+        self.setStyleSheet(_POPUP_STYLESHEET)
+        self.setMinimumWidth(340)
 
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(4, 4, 4, 4)
-        layout.setSpacing(4)
+        layout.setContentsMargins(12, 12, 12, 12)
+        layout.setSpacing(8)
 
         # --- Helper: build a widget action row ---
         def _make_row(label_text, widget):
             container = QWidget()
             row = QHBoxLayout(container)
-            row.setContentsMargins(8, 4, 8, 4)
-            row.setSpacing(8)
+            row.setContentsMargins(12, 6, 12, 6)
+            row.setSpacing(12)
             lbl = QLabel(label_text)
-            lbl.setFixedWidth(150)
+            lbl.setFixedWidth(132)
             row.addWidget(lbl)
             row.addWidget(widget)
             return container
@@ -112,8 +171,8 @@ class TextSettingsPopup(QDialog):
         title_container = QWidget()
         title_layout = QHBoxLayout(title_container)
         title_layout.setContentsMargins(8, 6, 8, 4)
-        title_lbl = QLabel("Text Settings")
-        title_lbl.setStyleSheet("color: #7C5CFC; font-weight: bold; font-size: 24px;")
+        title_lbl = QLabel("Text")
+        title_lbl.setObjectName("popupTitle")
         title_layout.addWidget(title_lbl)
         layout.addWidget(title_container)
 
@@ -121,7 +180,9 @@ class TextSettingsPopup(QDialog):
         sep = QFrame()
         sep.setFrameShape(QFrame.Shape.HLine)
         sep.setFrameShadow(QFrame.Shadow.Sunken)
-        sep.setStyleSheet("background-color: #3A3A50; max-height: 1px; border: none;")
+        sep.setStyleSheet(
+            f"background-color: {BORDER_SUBTLE}; max-height: 1px; border: none;"
+        )
         layout.addWidget(sep)
 
         # Helper: format QColor to CSS rgba
@@ -130,22 +191,24 @@ class TextSettingsPopup(QDialog):
 
         # --- Text color row ---
         tc_btn = QToolButton()
-        tc_btn.setFixedSize(120, 40)
+        tc_btn.setFixedSize(110, 40)
         tc_btn.setStyleSheet(f"background: {_rgba_css(item.text_color)};")
         tc_btn.setToolTip("Pick text color")
+        tc_btn.setAccessibleName("Text color")
         def _pick_text_color():
             color = QColorDialog.getColor(item.text_color, self, "Text Color")
             if color.isValid():
                 item.set_text_color(color)
                 tc_btn.setStyleSheet(f"background: {_rgba_css(color)};")
         tc_btn.clicked.connect(_pick_text_color)
-        layout.addWidget(_make_row("Text Color:", tc_btn))
+        layout.addWidget(_make_row("Text color", tc_btn))
 
         # --- Background color row ---
         bg_btn = QToolButton()
-        bg_btn.setFixedSize(120, 40)
+        bg_btn.setFixedSize(110, 40)
         bg_btn.setStyleSheet(f"background: {_rgba_css(item.bg_color)};")
         bg_btn.setToolTip("Pick background color")
+        bg_btn.setAccessibleName("Text background color")
         def _pick_bg_color():
             color = QColorDialog.getColor(
                 item.bg_color, self, "Background Color",
@@ -155,18 +218,19 @@ class TextSettingsPopup(QDialog):
                 item.set_bg_color(color)
                 bg_btn.setStyleSheet(f"background: {_rgba_css(color)};")
         bg_btn.clicked.connect(_pick_bg_color)
-        layout.addWidget(_make_row("BG Color:", bg_btn))
+        layout.addWidget(_make_row("Background", bg_btn))
 
         # --- Text size row ---
-        size_spin = QSpinBox()
+        size_spin = FluentSpinBox()
         size_spin.setRange(6, 72)
         size_spin.setValue(item.font_size)
         size_spin.setSuffix(" pt")
-        size_spin.setFixedSize(120, 40)
+        size_spin.setFixedSize(110, 40)
+        size_spin.setAccessibleName("Text size")
         def _apply_size(val):
             item.set_font_size(val)
         size_spin.valueChanged.connect(_apply_size)
-        layout.addWidget(_make_row("Text Size:", size_spin))
+        layout.addWidget(_make_row("Text size", size_spin))
 
     def changeEvent(self, event):
         if event.type() == QEvent.Type.ActivationChange:
@@ -185,53 +249,20 @@ class ShapeSettingsPopup(QDialog):
         super().__init__(parent)
         self.item = item
         self.setWindowFlags(Qt.WindowType.Tool | Qt.WindowType.FramelessWindowHint)
-        self.setStyleSheet("""
-            QDialog {
-                background: #2A2A3C;
-                border: 1px solid #3A3A50;
-                border-radius: 6px;
-            }
-            QLabel { color: #8A8AB0; font-size: 22px; padding: 4px 8px 2px 8px; }
-            QSpinBox {
-                background: #363650; border: 1px solid #3A3A50;
-                border-radius: 4px; color: #E0E0F0; padding: 3px; min-width: 120px;
-                font-size: 22px;
-            }
-            QToolButton {
-                background: transparent; border: 1px solid #3A3A50;
-                border-radius: 4px; color: #E0E0F0; padding: 4px 8px;
-                font-size: 22px;
-            }
-            QToolButton:hover { background: #3A3A50; }
-            QCheckBox {
-                color: #8A8AB0;
-                font-size: 22px;
-                padding: 4px;
-            }
-            QCheckBox::indicator {
-                width: 24px;
-                height: 24px;
-                border: 1px solid #3A3A50;
-                background: #363650;
-                border-radius: 4px;
-            }
-            QCheckBox::indicator:checked {
-                background: #60CDFF;
-                border: 1px solid #60CDFF;
-            }
-        """)
+        self.setStyleSheet(_POPUP_STYLESHEET)
+        self.setMinimumWidth(340)
 
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(4, 4, 4, 4)
-        layout.setSpacing(4)
+        layout.setContentsMargins(12, 12, 12, 12)
+        layout.setSpacing(8)
 
         def _make_row(label_text, widget):
             container = QWidget()
             row = QHBoxLayout(container)
-            row.setContentsMargins(8, 4, 8, 4)
-            row.setSpacing(8)
+            row.setContentsMargins(12, 6, 12, 6)
+            row.setSpacing(12)
             lbl = QLabel(label_text)
-            lbl.setFixedWidth(150)
+            lbl.setFixedWidth(132)
             row.addWidget(lbl)
             row.addWidget(widget)
             return container
@@ -240,15 +271,17 @@ class ShapeSettingsPopup(QDialog):
         title_container = QWidget()
         title_layout = QHBoxLayout(title_container)
         title_layout.setContentsMargins(8, 6, 8, 4)
-        title_lbl = QLabel("Shape Settings")
-        title_lbl.setStyleSheet("color: #7C5CFC; font-weight: bold; font-size: 24px;")
+        title_lbl = QLabel("Shape")
+        title_lbl.setObjectName("popupTitle")
         title_layout.addWidget(title_lbl)
         layout.addWidget(title_container)
 
         sep = QFrame()
         sep.setFrameShape(QFrame.Shape.HLine)
         sep.setFrameShadow(QFrame.Shadow.Sunken)
-        sep.setStyleSheet("background-color: #3A3A50; max-height: 1px; border: none;")
+        sep.setStyleSheet(
+            f"background-color: {BORDER_SUBTLE}; max-height: 1px; border: none;"
+        )
         layout.addWidget(sep)
 
         def _rgba_css(color):
@@ -256,27 +289,29 @@ class ShapeSettingsPopup(QDialog):
 
         # --- Stroke color row ---
         sc_btn = QToolButton()
-        sc_btn.setFixedSize(120, 40)
+        sc_btn.setFixedSize(110, 40)
         sc_btn.setStyleSheet(f"background: {_rgba_css(item.pen_color)};")
         sc_btn.setToolTip("Pick stroke color")
+        sc_btn.setAccessibleName("Stroke color")
         def _pick_stroke_color():
             color = QColorDialog.getColor(item.pen_color, self, "Stroke Color")
             if color.isValid():
                 item.set_pen_color(color)
                 sc_btn.setStyleSheet(f"background: {_rgba_css(color)};")
         sc_btn.clicked.connect(_pick_stroke_color)
-        layout.addWidget(_make_row("Stroke Color:", sc_btn))
+        layout.addWidget(_make_row("Stroke color", sc_btn))
 
         # --- Stroke size row ---
-        size_spin = QSpinBox()
+        size_spin = FluentSpinBox()
         size_spin.setRange(1, 40)
         size_spin.setValue(item.pen_width)
         size_spin.setSuffix(" px")
-        size_spin.setFixedSize(120, 40)
+        size_spin.setFixedSize(110, 40)
+        size_spin.setAccessibleName("Stroke width")
         def _apply_size(val):
             item.set_pen_width(val)
         size_spin.valueChanged.connect(_apply_size)
-        layout.addWidget(_make_row("Stroke Size:", size_spin))
+        layout.addWidget(_make_row("Stroke width", size_spin))
 
         # --- Fill rows (if applicable) ---
         if hasattr(item, 'fill_enabled'):
@@ -288,7 +323,7 @@ class ShapeSettingsPopup(QDialog):
                 item.set_fill_enabled(checked)
             fill_cb.toggled.connect(_toggle_fill)
             
-            layout.addWidget(_make_row("Fill:", fill_cb))
+            layout.addWidget(_make_row("Fill", fill_cb))
 
     def changeEvent(self, event):
         if event.type() == QEvent.Type.ActivationChange:
@@ -623,10 +658,27 @@ class CanvasView(QGraphicsView):
         self._prev_drag_mode = QGraphicsView.DragMode.NoDrag
         self.setStyleSheet("""
             QGraphicsView {
-                background: #202020;
+                background: %s;
                 border: none;
             }
-        """)
+            QScrollBar:vertical, QScrollBar:horizontal {
+                background: %s;
+                border: none;
+            }
+            QScrollBar::handle:vertical, QScrollBar::handle:horizontal {
+                background: %s;
+                border-radius: 4px;
+                min-width: 28px;
+                min-height: 28px;
+            }
+            QScrollBar::handle:vertical:hover, QScrollBar::handle:horizontal:hover {
+                background: %s;
+            }
+            QScrollBar::add-line, QScrollBar::sub-line {
+                width: 0px;
+                height: 0px;
+            }
+        """ % (CONTENT, BASE, BORDER, HOVER))
 
     def set_tool(self, tool: str):
         """Switch between grab/pan mode and normal mode."""

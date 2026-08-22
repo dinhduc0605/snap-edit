@@ -3,190 +3,182 @@ Settings dialog for SnapEdit.
 Provides a modern dark-themed dialog with tabs for Hotkeys, Storage, and Drawing Defaults.
 """
 from PyQt6.QtCore import Qt
-from PyQt6.QtGui import QColor, QKeySequence, QFont, QIcon
+from PyQt6.QtGui import QColor, QKeySequence
 from PyQt6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QLabel, QLineEdit,
-    QPushButton, QSpinBox, QComboBox, QCheckBox, QTabWidget,
+    QPushButton, QComboBox, QCheckBox,
     QWidget, QFileDialog, QKeySequenceEdit,
-    QGroupBox, QFormLayout, QColorDialog,
+    QGroupBox, QFormLayout, QColorDialog, QListWidget,
+    QStackedWidget, QFrame,
 )
+from ui_widgets import FluentSpinBox
 
 from settings.config import Config
+from theme import (
+    ACCENT, ACCENT_HOVER, ACCENT_PRESSED, BASE, BORDER,
+    BORDER_SUBTLE, CONTROL_RADIUS, HOVER, OVERLAY_RADIUS, PRESSED,
+    SURFACE, SURFACE_ALT, TEXT_MUTED, TEXT_PRIMARY, TEXT_SECONDARY,
+    TYPE_BODY_PT, TYPE_CAPTION_PT, TYPE_DISPLAY_PT, TYPE_TITLE_PT,
+)
 
 
-# ── Dark‑theme colour tokens ────────────────────────────────────────
-_BG       = "#1E1E2E"
-_CARD     = "#2A2A3C"
-_ACCENT   = "#7C5CFC"
-_TEXT     = "#E0E0E0"
-_INPUT_BG = "#363650"
-_BORDER   = "#3A3A52"
-_HOVER    = "#8E72FF"
-_PRESSED  = "#6A48E0"
-
-# ── Global stylesheet applied to the dialog ─────────────────────────
 _STYLESHEET = f"""
-/* ─── Dialog ─────────────────────────────── */
 QDialog {{
-    background: {_BG};
-    color: {_TEXT};
-    font-family: 'Segoe UI', sans-serif;
-    font-size: 13px;
+    background: {BASE};
+    color: {TEXT_PRIMARY};
+    font-family: 'Segoe UI Variable', 'Segoe UI';
+    font-size: {TYPE_BODY_PT}pt;
 }}
-
-/* ─── Tab widget ─────────────────────────── */
-QTabWidget::pane {{
-    border: 1px solid {_BORDER};
-    border-radius: 8px;
-    background: {_CARD};
-    top: -1px;
+QFrame#settingsHeader {{
+    background: {BASE};
+    border-bottom: 1px solid {BORDER_SUBTLE};
 }}
-QTabBar::tab {{
-    background: {_BG};
-    color: {_TEXT};
-    padding: 8px 20px;
-    margin-right: 2px;
-    border-top-left-radius: 8px;
-    border-top-right-radius: 8px;
-    border: 1px solid {_BORDER};
-    border-bottom: none;
-    min-width: 100px;
+QFrame#settingsFooter {{
+    background: {BASE};
+    border-top: 1px solid {BORDER_SUBTLE};
 }}
-QTabBar::tab:selected {{
-    background: {_CARD};
-    color: {_ACCENT};
-    font-weight: bold;
-    border-bottom: 2px solid {_ACCENT};
+QLabel#settingsTitle {{
+    color: {TEXT_PRIMARY};
+    font-size: {TYPE_DISPLAY_PT}pt;
+    font-weight: 600;
 }}
-QTabBar::tab:hover:!selected {{
-    background: {_INPUT_BG};
+QLabel#settingsSubtitle, QLabel#pageDescription {{
+    color: {TEXT_MUTED};
+    font-size: {TYPE_CAPTION_PT}pt;
 }}
-
-/* ─── Group boxes ────────────────────────── */
+QLabel#pageTitle {{
+    color: {TEXT_PRIMARY};
+    font-size: {TYPE_TITLE_PT}pt;
+    font-weight: 600;
+}}
+QListWidget {{
+    background: transparent;
+    border: none;
+    outline: none;
+    color: {TEXT_SECONDARY};
+    padding: 4px;
+}}
+QListWidget::item {{
+    border-radius: {CONTROL_RADIUS}px;
+    padding: 12px 14px;
+    margin: 2px 0;
+}}
+QListWidget::item:hover {{
+    background: {HOVER};
+}}
+QListWidget::item:selected {{
+    background: {SURFACE_ALT};
+    color: {TEXT_PRIMARY};
+    border-left: 2px solid {ACCENT};
+}}
 QGroupBox {{
-    background: {_CARD};
-    border: 1px solid {_BORDER};
-    border-radius: 8px;
-    margin-top: 14px;
-    padding: 16px 12px 12px 12px;
-    font-weight: bold;
-    color: {_TEXT};
+    background: {SURFACE};
+    border: 1px solid {BORDER};
+    border-radius: {OVERLAY_RADIUS}px;
+    margin-top: 18px;
+    padding: 24px 20px 20px 20px;
+    color: {TEXT_PRIMARY};
+    font-weight: 600;
 }}
 QGroupBox::title {{
     subcontrol-origin: margin;
     subcontrol-position: top left;
+    left: 12px;
     padding: 0 6px;
-    color: {_ACCENT};
+    color: {TEXT_PRIMARY};
 }}
-
-/* ─── Labels ─────────────────────────────── */
 QLabel {{
-    color: {_TEXT};
-    font-size: 13px;
+    color: {TEXT_SECONDARY};
+    font-size: {TYPE_BODY_PT}pt;
 }}
-
-/* ─── Input fields ───────────────────────── */
 QLineEdit, QSpinBox, QComboBox, QKeySequenceEdit {{
-    background: {_INPUT_BG};
-    color: {_TEXT};
-    border: 1px solid {_BORDER};
-    border-radius: 6px;
-    padding: 6px 10px;
-    min-height: 28px;
-    selection-background-color: {_ACCENT};
+    background: {SURFACE_ALT};
+    color: {TEXT_PRIMARY};
+    border: 1px solid {BORDER};
+    border-radius: {CONTROL_RADIUS}px;
+    padding: 8px 12px;
+    min-height: 32px;
+    selection-background-color: {ACCENT};
+    selection-color: {BASE};
 }}
 QLineEdit:focus, QSpinBox:focus, QComboBox:focus, QKeySequenceEdit:focus {{
-    border: 1px solid {_ACCENT};
+    border-color: {ACCENT};
 }}
-QComboBox::drop-down {{
-    border: none;
-    width: 28px;
-}}
+QComboBox::drop-down {{ border: none; width: 28px; }}
 QComboBox QAbstractItemView {{
-    background: {_INPUT_BG};
-    color: {_TEXT};
-    border: 1px solid {_ACCENT};
-    selection-background-color: {_ACCENT};
-    outline: 0px;
+    background: {SURFACE_ALT};
+    color: {TEXT_PRIMARY};
+    border: 1px solid {BORDER};
+    selection-background-color: {HOVER};
+    outline: none;
 }}
 QSpinBox::up-button, QSpinBox::down-button {{
-    background: {_CARD};
+    background: {SURFACE};
     border: none;
-    width: 20px;
+    width: 24px;
 }}
-QSpinBox::up-arrow {{
+QSpinBox::up-button {{ border-top-right-radius: {CONTROL_RADIUS}px; }}
+QSpinBox::down-button {{ border-bottom-right-radius: {CONTROL_RADIUS}px; }}
+QSpinBox::up-button:hover, QSpinBox::down-button:hover {{
+    background: {HOVER};
+}}
+QSpinBox::up-arrow, QSpinBox::down-arrow {{
     image: none;
-    border-left: 5px solid transparent;
-    border-right: 5px solid transparent;
-    border-bottom: 5px solid {_TEXT};
-    width: 0; height: 0;
+    width: 0px;
+    height: 0px;
+    border: none;
 }}
-QSpinBox::down-arrow {{
-    image: none;
-    border-left: 5px solid transparent;
-    border-right: 5px solid transparent;
-    border-top: 5px solid {_TEXT};
-    width: 0; height: 0;
-}}
-
-/* ─── Checkboxes ─────────────────────────── */
 QCheckBox {{
-    color: {_TEXT};
+    color: {TEXT_PRIMARY};
     spacing: 8px;
 }}
 QCheckBox::indicator {{
-    width: 18px;
-    height: 18px;
-    border: 2px solid {_BORDER};
-    border-radius: 4px;
-    background: {_INPUT_BG};
+    width: 16px;
+    height: 16px;
+    border: 1px solid {BORDER};
+    border-radius: 3px;
+    background: {SURFACE_ALT};
 }}
 QCheckBox::indicator:checked {{
-    background: {_ACCENT};
-    border-color: {_ACCENT};
+    background: {ACCENT};
+    border-color: {ACCENT};
 }}
-
-/* ─── Buttons ────────────────────────────── */
 QPushButton {{
-    background: {_INPUT_BG};
-    color: {_TEXT};
-    border: 1px solid {_BORDER};
-    border-radius: 6px;
-    padding: 7px 18px;
-    font-size: 13px;
-    min-height: 28px;
+    background: {SURFACE_ALT};
+    color: {TEXT_PRIMARY};
+    border: 1px solid {BORDER};
+    border-radius: {CONTROL_RADIUS}px;
+    padding: 8px 18px;
+    font-size: {TYPE_BODY_PT}pt;
+    min-height: 30px;
 }}
 QPushButton:hover {{
-    background: {_HOVER};
-    border-color: {_HOVER};
-    color: #FFFFFF;
+    background: {HOVER};
 }}
 QPushButton:pressed {{
-    background: {_PRESSED};
+    background: {PRESSED};
 }}
 QPushButton#btnSave {{
-    background: {_ACCENT};
-    border-color: {_ACCENT};
-    color: #FFFFFF;
-    font-weight: bold;
+    background: {ACCENT};
+    border-color: {ACCENT};
+    color: {BASE};
+    font-weight: 600;
 }}
 QPushButton#btnSave:hover {{
-    background: {_HOVER};
+    background: {ACCENT_HOVER};
+    border-color: {ACCENT_HOVER};
 }}
-
-/* ─── Dialog button box ──────────────────── */
-QDialogButtonBox QPushButton {{
-    min-width: 90px;
+QPushButton#btnSave:pressed {{
+    background: {ACCENT_PRESSED};
+    border-color: {ACCENT_PRESSED};
 }}
-
-/* ─── Scroll area (if ever used) ─────────── */
 QScrollBar:vertical {{
-    background: {_BG};
+    background: {BASE};
     width: 8px;
     border-radius: 4px;
 }}
 QScrollBar::handle:vertical {{
-    background: {_BORDER};
+    background: {BORDER};
     border-radius: 4px;
     min-height: 30px;
 }}
@@ -199,7 +191,7 @@ class _ColorButton(QPushButton):
     def __init__(self, initial_color: str = "#FF3B30", parent=None):
         super().__init__(parent)
         self._color = QColor(initial_color)
-        self.setFixedSize(40, 30)
+        self.setFixedSize(48, 36)
         self.setCursor(Qt.CursorShape.PointingHandCursor)
         self._update_swatch()
         self.clicked.connect(self._pick_color)
@@ -219,8 +211,8 @@ class _ColorButton(QPushButton):
     def _update_swatch(self):
         self.setStyleSheet(
             f"background: {self._color.name()};"
-            f"border: 2px solid {_BORDER};"
-            f"border-radius: 6px;"
+            f"border: 1px solid {BORDER};"
+            f"border-radius: {CONTROL_RADIUS}px;"
         )
 
     def _pick_color(self):
@@ -234,41 +226,63 @@ class _ColorButton(QPushButton):
 
 
 class SettingsDialog(QDialog):
-    """Application settings dialog with a modern dark‑themed UI."""
+    """Application settings dialog using a Fluent left-nav silhouette."""
 
     def __init__(self, config: Config, parent=None):
         super().__init__(parent)
         self._config = config
 
-        self.setWindowTitle("SnapEdit – Settings")
-        self.setMinimumSize(520, 480)
-        self.resize(560, 520)
+        self.setWindowTitle("SnapEdit - Settings")
+        self.setMinimumSize(780, 580)
+        self.resize(860, 640)
         self.setStyleSheet(_STYLESHEET)
 
-        # ── main layout ─────────────────────────────────────────────
         root = QVBoxLayout(self)
-        root.setContentsMargins(18, 18, 18, 14)
-        root.setSpacing(12)
+        root.setContentsMargins(0, 0, 0, 0)
+        root.setSpacing(0)
 
-        # Title label
-        title = QLabel("⚙  Settings")
-        title.setFont(QFont("Segoe UI", 17, QFont.Weight.Bold))
-        title.setStyleSheet(f"color: {_ACCENT}; margin-bottom: 2px;")
-        root.addWidget(title)
+        header = QFrame()
+        header.setObjectName("settingsHeader")
+        header_layout = QVBoxLayout(header)
+        header_layout.setContentsMargins(24, 16, 24, 16)
+        header_layout.setSpacing(2)
+        title = QLabel("Settings")
+        title.setObjectName("settingsTitle")
+        subtitle = QLabel("Customize capture, storage, and drawing defaults")
+        subtitle.setObjectName("settingsSubtitle")
+        header_layout.addWidget(title)
+        header_layout.addWidget(subtitle)
+        root.addWidget(header)
 
-        # Tab widget
-        self._tabs = QTabWidget()
-        root.addWidget(self._tabs, 1)
+        body = QWidget()
+        body_layout = QHBoxLayout(body)
+        body_layout.setContentsMargins(16, 16, 16, 16)
+        body_layout.setSpacing(16)
+
+        self._nav = QListWidget()
+        self._nav.setFixedWidth(168)
+        self._nav.setSpacing(0)
+        self._nav.addItems(["Hotkeys", "Storage", "Drawing"])
+        self._nav.setAccessibleName("Settings sections")
+        body_layout.addWidget(self._nav)
+
+        self._stack = QStackedWidget()
+        body_layout.addWidget(self._stack, 1)
+        root.addWidget(body, 1)
 
         self._build_hotkeys_tab()
         self._build_storage_tab()
         self._build_drawing_tab()
+        self._nav.currentRowChanged.connect(self._stack.setCurrentIndex)
+        self._nav.setCurrentRow(0)
 
-        # ── bottom buttons ───────────────────────────────────────────
-        btn_layout = QHBoxLayout()
+        footer = QFrame()
+        footer.setObjectName("settingsFooter")
+        btn_layout = QHBoxLayout(footer)
+        btn_layout.setContentsMargins(16, 12, 16, 12)
         btn_layout.setSpacing(10)
 
-        self._btn_reset = QPushButton("Reset to Defaults")
+        self._btn_reset = QPushButton("Reset defaults")
         self._btn_reset.setCursor(Qt.CursorShape.PointingHandCursor)
         btn_layout.addWidget(self._btn_reset)
 
@@ -283,7 +297,7 @@ class SettingsDialog(QDialog):
         self._btn_save.setCursor(Qt.CursorShape.PointingHandCursor)
         btn_layout.addWidget(self._btn_save)
 
-        root.addLayout(btn_layout)
+        root.addWidget(footer)
 
         # ── connections ──────────────────────────────────────────────
         self._btn_save.clicked.connect(self._on_save)
@@ -294,102 +308,130 @@ class SettingsDialog(QDialog):
         self._load_from_config()
 
     # ────────────────────────────────────────────────────────────────
-    #  Tab builders
+    #  Page builders
     # ────────────────────────────────────────────────────────────────
+    @staticmethod
+    def _add_page_header(layout: QVBoxLayout, title: str, description: str):
+        title_label = QLabel(title)
+        title_label.setObjectName("pageTitle")
+        description_label = QLabel(description)
+        description_label.setObjectName("pageDescription")
+        description_label.setWordWrap(True)
+        layout.addWidget(title_label)
+        layout.addWidget(description_label)
+
     def _build_hotkeys_tab(self):
-        """Build the Hotkeys settings tab."""
+        """Build the Hotkeys settings page."""
         tab = QWidget()
         layout = QVBoxLayout(tab)
-        layout.setContentsMargins(12, 16, 12, 12)
-        layout.setSpacing(14)
+        layout.setContentsMargins(8, 4, 8, 8)
+        layout.setSpacing(8)
+        self._add_page_header(
+            layout,
+            "Hotkeys",
+            "Choose shortcuts that work while SnapEdit is running in the tray.",
+        )
 
-        group = QGroupBox("Global Hotkeys")
+        group = QGroupBox("Capture shortcuts")
         form = QFormLayout(group)
-        form.setLabelAlignment(Qt.AlignmentFlag.AlignRight)
-        form.setHorizontalSpacing(16)
-        form.setVerticalSpacing(14)
+        form.setLabelAlignment(Qt.AlignmentFlag.AlignLeft)
+        form.setHorizontalSpacing(24)
+        form.setVerticalSpacing(12)
 
         self._hk_fullscreen = QKeySequenceEdit()
         self._hk_region = QKeySequenceEdit()
 
-        form.addRow(QLabel("Capture Fullscreen"), self._hk_fullscreen)
-        form.addRow(QLabel("Capture Region"), self._hk_region)
+        form.addRow(QLabel("Full screen"), self._hk_fullscreen)
+        form.addRow(QLabel("Region"), self._hk_region)
 
         layout.addWidget(group)
         layout.addStretch()
-        self._tabs.addTab(tab, "🔑  Hotkeys")
+        self._stack.addWidget(tab)
 
     def _build_storage_tab(self):
-        """Build the Storage settings tab."""
+        """Build the Storage settings page."""
         tab = QWidget()
         layout = QVBoxLayout(tab)
-        layout.setContentsMargins(12, 16, 12, 12)
-        layout.setSpacing(14)
+        layout.setContentsMargins(8, 4, 8, 8)
+        layout.setSpacing(8)
+        self._add_page_header(
+            layout,
+            "Storage",
+            "Control where captures are saved and what happens after capture.",
+        )
 
-        group = QGroupBox("Storage")
+        group = QGroupBox("Save options")
         form = QFormLayout(group)
-        form.setLabelAlignment(Qt.AlignmentFlag.AlignRight)
-        form.setHorizontalSpacing(16)
-        form.setVerticalSpacing(14)
+        form.setLabelAlignment(Qt.AlignmentFlag.AlignLeft)
+        form.setHorizontalSpacing(24)
+        form.setVerticalSpacing(12)
 
         # Save directory row
         dir_row = QHBoxLayout()
+        dir_row.setContentsMargins(0, 0, 0, 0)
+        dir_row.setSpacing(8)
         self._save_dir_edit = QLineEdit()
         self._save_dir_edit.setReadOnly(True)
-        self._save_dir_edit.setPlaceholderText("Select save directory…")
+        self._save_dir_edit.setPlaceholderText("Select a save folder")
         dir_row.addWidget(self._save_dir_edit, 1)
-        self._btn_browse = QPushButton("Browse…")
-        self._btn_browse.setFixedWidth(72)
+        self._btn_browse = QPushButton("Browse")
+        self._btn_browse.setMinimumWidth(104)
         self._btn_browse.setCursor(Qt.CursorShape.PointingHandCursor)
         self._btn_browse.clicked.connect(self._browse_directory)
         dir_row.addWidget(self._btn_browse)
         dir_widget = QWidget()
         dir_widget.setLayout(dir_row)
-        form.addRow(QLabel("Save Directory"), dir_widget)
+        form.addRow(QLabel("Save folder"), dir_widget)
 
         # Default format
         self._format_combo = QComboBox()
         self._format_combo.addItems(["PNG", "JPG", "BMP"])
-        form.addRow(QLabel("Default Format"), self._format_combo)
+        form.addRow(QLabel("Default format"), self._format_combo)
 
         # Auto‑copy clipboard
         self._auto_copy_cb = QCheckBox("Auto-copy to clipboard after capture")
-        form.addRow("", self._auto_copy_cb)
+        self._auto_copy_cb.setMinimumHeight(32)
+        form.addRow(self._auto_copy_cb)
 
         layout.addWidget(group)
         layout.addStretch()
-        self._tabs.addTab(tab, "💾  Storage")
+        self._stack.addWidget(tab)
 
     def _build_drawing_tab(self):
-        """Build the Drawing Defaults tab."""
+        """Build the Drawing Defaults settings page."""
         tab = QWidget()
         layout = QVBoxLayout(tab)
-        layout.setContentsMargins(12, 16, 12, 12)
-        layout.setSpacing(14)
+        layout.setContentsMargins(8, 4, 8, 8)
+        layout.setSpacing(8)
+        self._add_page_header(
+            layout,
+            "Drawing",
+            "Set the initial appearance of new annotations.",
+        )
 
-        group = QGroupBox("Drawing Defaults")
+        group = QGroupBox("Annotation defaults")
         form = QFormLayout(group)
-        form.setLabelAlignment(Qt.AlignmentFlag.AlignRight)
-        form.setHorizontalSpacing(16)
-        form.setVerticalSpacing(14)
+        form.setLabelAlignment(Qt.AlignmentFlag.AlignLeft)
+        form.setHorizontalSpacing(24)
+        form.setVerticalSpacing(12)
 
         # Stroke colour
         self._stroke_color_btn = _ColorButton()
-        form.addRow(QLabel("Default Color"), self._stroke_color_btn)
+        form.addRow(QLabel("Default color"), self._stroke_color_btn)
 
         # Stroke width
-        self._stroke_width_spin = QSpinBox()
+        self._stroke_width_spin = FluentSpinBox()
         self._stroke_width_spin.setRange(1, 20)
         self._stroke_width_spin.setSuffix(" px")
-        form.addRow(QLabel("Stroke Width"), self._stroke_width_spin)
+        form.addRow(QLabel("Stroke width"), self._stroke_width_spin)
 
         # Bubble colour
         self._bubble_color_btn = _ColorButton()
-        form.addRow(QLabel("Bubble Color"), self._bubble_color_btn)
+        form.addRow(QLabel("Bubble color"), self._bubble_color_btn)
 
         layout.addWidget(group)
         layout.addStretch()
-        self._tabs.addTab(tab, "🎨  Drawing")
+        self._stack.addWidget(tab)
 
     # ────────────────────────────────────────────────────────────────
     #  Config <‑> Widget synchronisation

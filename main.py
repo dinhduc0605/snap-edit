@@ -21,7 +21,7 @@ except Exception:
 from PyQt6.QtCore import Qt, QTimer
 from PyQt6.QtGui import QIcon, QPixmap, QPainter, QColor, QAction, QFont
 from PyQt6.QtWidgets import (
-    QApplication, QSystemTrayIcon, QMenu, QWidget
+    QApplication, QSystemTrayIcon, QMenu
 )
 
 from settings.config import Config
@@ -30,6 +30,10 @@ from capture.fullscreen import capture_fullscreen
 from capture.region import RegionSelector
 from editor.editor_window import EditorWindow
 from settings.settings_dialog import SettingsDialog
+from theme import (
+    ACCENT, BASE, BORDER, HOVER, SURFACE, SURFACE_ALT, TEXT_PRIMARY,
+    TYPE_BODY_PT,
+)
 
 
 class SnapEditApp:
@@ -40,6 +44,7 @@ class SnapEditApp:
         self._app.setQuitOnLastWindowClosed(False)
         self._app.setApplicationName("SnapEdit")
         self._app.setStyle("Fusion")
+        self._app.setFont(QFont("Segoe UI Variable", 11))
 
         # Apply dark palette globally
         self._apply_dark_palette()
@@ -54,19 +59,19 @@ class SnapEditApp:
     def _apply_dark_palette(self):
         from PyQt6.QtGui import QPalette
         palette = QPalette()
-        palette.setColor(QPalette.ColorRole.Window, QColor("#1E1E2E"))
-        palette.setColor(QPalette.ColorRole.WindowText, QColor("#E0E0F0"))
-        palette.setColor(QPalette.ColorRole.Base, QColor("#2A2A3C"))
-        palette.setColor(QPalette.ColorRole.AlternateBase, QColor("#363650"))
-        palette.setColor(QPalette.ColorRole.ToolTipBase, QColor("#2A2A3C"))
-        palette.setColor(QPalette.ColorRole.ToolTipText, QColor("#E0E0F0"))
-        palette.setColor(QPalette.ColorRole.Text, QColor("#E0E0F0"))
-        palette.setColor(QPalette.ColorRole.Button, QColor("#2A2A3C"))
-        palette.setColor(QPalette.ColorRole.ButtonText, QColor("#E0E0F0"))
+        palette.setColor(QPalette.ColorRole.Window, QColor(BASE))
+        palette.setColor(QPalette.ColorRole.WindowText, QColor(TEXT_PRIMARY))
+        palette.setColor(QPalette.ColorRole.Base, QColor(SURFACE))
+        palette.setColor(QPalette.ColorRole.AlternateBase, QColor(SURFACE_ALT))
+        palette.setColor(QPalette.ColorRole.ToolTipBase, QColor(SURFACE))
+        palette.setColor(QPalette.ColorRole.ToolTipText, QColor(TEXT_PRIMARY))
+        palette.setColor(QPalette.ColorRole.Text, QColor(TEXT_PRIMARY))
+        palette.setColor(QPalette.ColorRole.Button, QColor(SURFACE))
+        palette.setColor(QPalette.ColorRole.ButtonText, QColor(TEXT_PRIMARY))
         palette.setColor(QPalette.ColorRole.BrightText, QColor("#FFFFFF"))
-        palette.setColor(QPalette.ColorRole.Highlight, QColor("#7C5CFC"))
-        palette.setColor(QPalette.ColorRole.HighlightedText, QColor("#FFFFFF"))
-        palette.setColor(QPalette.ColorRole.Link, QColor("#7C5CFC"))
+        palette.setColor(QPalette.ColorRole.Highlight, QColor(ACCENT))
+        palette.setColor(QPalette.ColorRole.HighlightedText, QColor(BASE))
+        palette.setColor(QPalette.ColorRole.Link, QColor(ACCENT))
         self._app.setPalette(palette)
 
     def _create_tray_icon(self) -> QIcon:
@@ -77,7 +82,7 @@ class SnapEditApp:
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
 
         # Background circle
-        painter.setBrush(QColor("#7C5CFC"))
+        painter.setBrush(QColor("#0F6CBD"))
         painter.setPen(Qt.PenStyle.NoPen)
         painter.drawRoundedRect(4, 4, 56, 56, 14, 14)
 
@@ -87,7 +92,7 @@ class SnapEditApp:
         painter.drawRect(26, 16, 12, 8)
 
         # Lens
-        painter.setBrush(QColor("#7C5CFC"))
+        painter.setBrush(QColor("#0F6CBD"))
         painter.drawEllipse(24, 26, 16, 16)
         painter.setBrush(QColor("#FFFFFF"))
         painter.drawEllipse(28, 30, 8, 8)
@@ -105,47 +110,53 @@ class SnapEditApp:
         menu = QMenu()
         menu.setStyleSheet("""
             QMenu {
-                background: #1E1E2E;
-                border: 1px solid #3A3A50;
+                background: %s;
+                border: 1px solid %s;
                 border-radius: 8px;
-                padding: 4px;
+                padding: 8px;
+                font-family: 'Segoe UI Variable', 'Segoe UI';
+                font-size: %dpt;
+                min-width: 220px;
             }
             QMenu::item {
-                padding: 8px 24px;
-                color: #E0E0F0;
+                padding: 10px 36px 10px 16px;
+                color: %s;
                 border-radius: 4px;
             }
             QMenu::item:selected {
-                background: #7C5CFC;
-                color: white;
+                background: %s;
+                color: %s;
             }
             QMenu::separator {
                 height: 1px;
-                background: #3A3A50;
-                margin: 4px 8px;
+                background: %s;
+                margin: 6px 8px;
             }
-        """)
+        """ % (
+            SURFACE, BORDER, TYPE_BODY_PT, TEXT_PRIMARY,
+            HOVER, TEXT_PRIMARY, BORDER,
+        ))
 
         # Capture actions
-        fullscreen_action = QAction("📸  Capture Fullscreen", menu)
+        fullscreen_action = QAction("Capture full screen", menu)
         fullscreen_action.triggered.connect(self._capture_fullscreen)
         menu.addAction(fullscreen_action)
 
-        region_action = QAction("✂️  Capture Region", menu)
+        region_action = QAction("Capture region", menu)
         region_action.triggered.connect(self._capture_region)
         menu.addAction(region_action)
 
         menu.addSeparator()
 
         # Settings
-        settings_action = QAction("⚙️  Settings", menu)
+        settings_action = QAction("Settings", menu)
         settings_action.triggered.connect(self._open_settings)
         menu.addAction(settings_action)
 
         menu.addSeparator()
 
         # Exit
-        exit_action = QAction("❌  Exit", menu)
+        exit_action = QAction("Exit SnapEdit", menu)
         exit_action.triggered.connect(self._quit)
         menu.addAction(exit_action)
 

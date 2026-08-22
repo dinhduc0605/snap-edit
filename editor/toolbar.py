@@ -3,24 +3,110 @@ Toolbar widget for the SnapEdit editor.
 Provides tool selection, color picker, and stroke size controls.
 Uses emoji text icons (no external icon library required).
 """
-from PyQt6.QtCore import Qt, pyqtSignal, QSize
-from PyQt6.QtGui import QColor, QIcon, QPainter, QPixmap, QFont, QAction
+from PyQt6.QtCore import Qt, pyqtSignal, QSize, QPointF, QRectF
+from PyQt6.QtGui import (
+    QColor, QIcon, QPainter, QPixmap, QFont, QPainterPath,
+    QPen,
+)
 from PyQt6.QtWidgets import (
     QWidget, QHBoxLayout,
     QToolButton, QButtonGroup,
-    QColorDialog, QSpinBox, QFrame, QCheckBox
+    QColorDialog, QFrame, QCheckBox, QLabel
 )
 
+from theme import (
+    ACCENT, ACCENT_SUBTLE, BASE, BORDER,
+    BORDER_SUBTLE, CONTROL_RADIUS, HOVER, PRESSED, SURFACE,
+    SURFACE_ALT, TEXT_PRIMARY, TEXT_SECONDARY, TYPE_BODY_PT,
+)
+from ui_widgets import FluentSpinBox
 
-def _make_btn(text: str, tooltip: str, checkable: bool = False,
+
+def _toolbar_icon(name: str, size: int = 24) -> QIcon:
+    """Create a crisp, font-independent toolbar icon."""
+    dpr = 2.0
+    pixmap = QPixmap(int(size * dpr), int(size * dpr))
+    pixmap.setDevicePixelRatio(dpr)
+    pixmap.fill(Qt.GlobalColor.transparent)
+
+    painter = QPainter(pixmap)
+    painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+    color = QColor(TEXT_PRIMARY)
+    pen = QPen(color, 1.7)
+    pen.setCapStyle(Qt.PenCapStyle.RoundCap)
+    pen.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
+    painter.setPen(pen)
+    painter.setBrush(Qt.BrushStyle.NoBrush)
+
+    scale = size / 22.0
+    painter.scale(scale, scale)
+
+    if name == "select":
+        path = QPainterPath(QPointF(4.0, 2.5))
+        path.lineTo(4.0, 17.5)
+        path.lineTo(8.2, 13.4)
+        path.lineTo(11.6, 20.0)
+        path.lineTo(14.4, 18.5)
+        path.lineTo(10.9, 12.2)
+        path.lineTo(17.0, 12.2)
+        path.closeSubpath()
+        painter.drawPath(path)
+    elif name == "text":
+        painter.drawLine(QPointF(5.0, 18.0), QPointF(11.0, 4.0))
+        painter.drawLine(QPointF(11.0, 4.0), QPointF(17.0, 18.0))
+        painter.drawLine(QPointF(7.5, 12.5), QPointF(14.5, 12.5))
+    elif name == "line":
+        painter.drawLine(QPointF(3.0, 11.0), QPointF(19.0, 11.0))
+    elif name == "arrow":
+        painter.drawLine(QPointF(3.0, 11.0), QPointF(18.5, 11.0))
+        painter.drawLine(QPointF(13.5, 6.0), QPointF(18.5, 11.0))
+        painter.drawLine(QPointF(13.5, 16.0), QPointF(18.5, 11.0))
+    elif name == "rect":
+        painter.drawRoundedRect(QRectF(4.0, 5.0, 14.0, 12.0), 1.5, 1.5)
+    elif name == "ellipse":
+        painter.drawEllipse(QRectF(4.0, 4.0, 14.0, 14.0))
+    elif name == "bubble":
+        painter.drawEllipse(QRectF(3.0, 3.0, 16.0, 16.0))
+        painter.drawLine(QPointF(9.5, 9.0), QPointF(11.0, 7.5))
+        painter.drawLine(QPointF(11.0, 7.5), QPointF(11.0, 15.0))
+        painter.drawLine(QPointF(9.0, 15.0), QPointF(13.0, 15.0))
+    elif name in ("undo", "redo"):
+        painter.save()
+        if name == "redo":
+            painter.translate(22.0, 0.0)
+            painter.scale(-1.0, 1.0)
+        path = QPainterPath(QPointF(8.0, 5.0))
+        path.lineTo(3.5, 9.5)
+        path.lineTo(8.0, 14.0)
+        painter.drawPath(path)
+        curve = QPainterPath(QPointF(4.0, 9.5))
+        curve.cubicTo(8.0, 6.0, 16.5, 6.0, 18.0, 14.5)
+        painter.drawPath(curve)
+        painter.restore()
+    elif name == "copy":
+        painter.drawRoundedRect(QRectF(7.0, 4.0, 11.0, 13.0), 1.5, 1.5)
+        painter.drawRoundedRect(QRectF(4.0, 7.0, 11.0, 12.0), 1.5, 1.5)
+    elif name == "save":
+        painter.drawRoundedRect(QRectF(4.0, 3.0, 14.0, 16.0), 1.5, 1.5)
+        painter.drawRect(QRectF(7.0, 3.0, 7.5, 5.0))
+        painter.drawRoundedRect(QRectF(7.0, 12.0, 8.0, 7.0), 1.0, 1.0)
+
+    painter.end()
+    return QIcon(pixmap)
+
+
+def _make_btn(icon_name: str, tooltip: str, checkable: bool = False,
               size: int = 24) -> QToolButton:
-    """Create a styled QToolButton with a text icon."""
+    """Create a styled QToolButton with a vector icon."""
     btn = QToolButton()
-    btn.setText(text)
+    btn.setIcon(_toolbar_icon(icon_name))
+    btn.setIconSize(QSize(24, 24))
+    btn.setProperty("iconName", icon_name)
     btn.setToolTip(tooltip)
     btn.setCheckable(checkable)
     btn.setFixedSize(size, size)
     btn.setCursor(Qt.CursorShape.PointingHandCursor)
+    btn.setAccessibleName(tooltip.split(" (")[0])
     return btn
 
 
@@ -93,7 +179,8 @@ class TextColorButton(QToolButton):
         painter.setRenderHint(QPainter.RenderHint.TextAntialiasing)
 
         # Draw 'A' in current text color with a lighter, elegant font
-        font = QFont("Segoe UI", 14)
+        font = QFont("Segoe UI")
+        font.setPixelSize(16)
         painter.setFont(font)
         painter.setPen(self._color)
         painter.drawText(0, -2, size, size, Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignVCenter, "A")
@@ -167,127 +254,158 @@ class Toolbar(QWidget):
 
     def _setup_ui(self, initial_color: QColor, initial_width: int):
         layout = QHBoxLayout(self)
-        layout.setContentsMargins(8, 6, 8, 6)
+        layout.setContentsMargins(12, 8, 12, 8)
         layout.setSpacing(4)
 
         self._button_group = QButtonGroup(self)
         self._button_group.setExclusive(True)
         self._tool_buttons: dict[str, QToolButton] = {}
 
-        # ── 1. Select ──────────────────────────────────────────────────
-        btn = _make_btn("\uE8B0", "Select (V)", checkable=True)
-        self._button_group.addButton(btn)
-        self._tool_buttons[ToolType.SELECT] = btn
-        layout.addWidget(btn)
-
-        layout.addWidget(self._create_separator())
-
-        # ── 2. Text tool + text-specific settings ──────────────────────
-        btn = _make_btn("\uE8D2", "Text (T)", checkable=True)
-        self._button_group.addButton(btn)
-        self._tool_buttons[ToolType.TEXT] = btn
-        layout.addWidget(btn)
-
-        # Text color — "A" icon
-        self._text_color_btn = TextColorButton(QColor("#FF0000"))
-        self._text_color_btn.color_changed.connect(self.text_color_changed.emit)
-        layout.addWidget(self._text_color_btn)
-
-        # Text background color — solid rectangle icon
-        self._text_bg_btn = ColorButton(QColor(255, 255, 255, 180))
-        self._text_bg_btn.setToolTip("Text Background Color")
-        self._text_bg_btn.color_changed.connect(self.text_bg_color_changed.emit)
-        layout.addWidget(self._text_bg_btn)
-
-        # Text size
-        self._text_size_spin = QSpinBox()
-        self._text_size_spin.setRange(6, 72)
-        self._text_size_spin.setValue(14)
-        self._text_size_spin.setSuffix("pt")
-        self._text_size_spin.setFixedWidth(70)
-        self._text_size_spin.setToolTip("Text Size")
-        self._text_size_spin.valueChanged.connect(self.text_size_changed.emit)
-        layout.addWidget(self._text_size_spin)
-
-        layout.addWidget(self._create_separator())
-
-        # ── 3. Shape tools ─────────────────────────────────────────────
-        for tool_type, emoji, tooltip in [
-            (ToolType.LINE,    "—",      "Line (L)"),
-            (ToolType.ARROW,   "\uE72A", "Arrow (A)"),
-            (ToolType.RECT,    "\uE71A", "Rectangle (R)"),
-            (ToolType.ELLIPSE, "\uEA3A", "Ellipse (E)"),
+        # Primary tools stay visible; properties are contextual.
+        for tool_type, icon_name, tooltip in [
+            (ToolType.SELECT,  "select",  "Select (V)"),
+            (ToolType.TEXT,    "text",    "Text (T)"),
+            (ToolType.LINE,    "line",    "Line (L)"),
+            (ToolType.ARROW,   "arrow",   "Arrow (A)"),
+            (ToolType.RECT,    "rect",    "Rectangle (R)"),
+            (ToolType.ELLIPSE, "ellipse", "Ellipse (E)"),
+            (ToolType.BUBBLE,  "bubble",  "Number bubble (B)"),
         ]:
-            btn = _make_btn(emoji, tooltip, checkable=True)
+            btn = _make_btn(icon_name, tooltip, checkable=True)
             self._button_group.addButton(btn)
             self._tool_buttons[tool_type] = btn
             layout.addWidget(btn)
 
         layout.addWidget(self._create_separator())
 
-        # ── 4. Stroke color, size, Fill ────────────────────────────────
+        # Text properties.
+        self._text_context = QWidget(self)
+        text_layout = QHBoxLayout(self._text_context)
+        text_layout.setContentsMargins(4, 0, 4, 0)
+        text_layout.setSpacing(8)
+        self._text_context_label = QLabel("Text")
+        self._text_context_label.setObjectName("contextTitle")
+        text_layout.addWidget(self._text_context_label)
+
+        self._text_color_btn = TextColorButton(QColor("#FF0000"))
+        self._text_color_btn.color_changed.connect(self.text_color_changed.emit)
+        self._text_color_btn.setAccessibleName("Text color")
+        text_layout.addWidget(self._text_color_btn)
+
+        self._text_bg_btn = ColorButton(QColor(255, 255, 255, 180))
+        self._text_bg_btn.setToolTip("Text Background Color")
+        self._text_bg_btn.setAccessibleName("Text background color")
+        self._text_bg_btn.color_changed.connect(self.text_bg_color_changed.emit)
+        text_layout.addWidget(self._text_bg_btn)
+
+        self._text_size_spin = FluentSpinBox()
+        self._text_size_spin.setRange(6, 72)
+        self._text_size_spin.setValue(14)
+        self._text_size_spin.setSuffix(" pt")
+        self._text_size_spin.setFixedWidth(72)
+        self._text_size_spin.setToolTip("Text Size")
+        self._text_size_spin.setAccessibleName("Text size")
+        self._text_size_spin.valueChanged.connect(self.text_size_changed.emit)
+        text_layout.addWidget(self._text_size_spin)
+        layout.addWidget(self._text_context)
+
+        # Shape and bubble properties.
+        self._shape_context = QWidget(self)
+        shape_layout = QHBoxLayout(self._shape_context)
+        shape_layout.setContentsMargins(4, 0, 4, 0)
+        shape_layout.setSpacing(8)
+        self._shape_context_label = QLabel("Shape")
+        self._shape_context_label.setObjectName("contextTitle")
+        shape_layout.addWidget(self._shape_context_label)
+
         self._color_button = ColorButton(initial_color)
         self._color_button.setToolTip("Stroke Color")
+        self._color_button.setAccessibleName("Stroke color")
         self._color_button.color_changed.connect(self.color_changed.emit)
-        layout.addWidget(self._color_button)
+        shape_layout.addWidget(self._color_button)
 
-        self._width_spin = QSpinBox()
+        self._width_spin = FluentSpinBox()
         self._width_spin.setRange(1, 20)
         self._width_spin.setValue(initial_width)
-        self._width_spin.setSuffix("px")
-        self._width_spin.setFixedWidth(70)
+        self._width_spin.setSuffix(" px")
+        self._width_spin.setFixedWidth(72)
+        self._width_spin.setToolTip("Stroke width")
+        self._width_spin.setAccessibleName("Stroke width")
         self._width_spin.valueChanged.connect(self.stroke_width_changed.emit)
-        layout.addWidget(self._width_spin)
+        shape_layout.addWidget(self._width_spin)
 
         self._fill_cb = QCheckBox("Fill")
+        self._fill_cb.setAccessibleName("Fill shape")
         self._fill_cb.toggled.connect(self.fill_changed.emit)
-        layout.addWidget(self._fill_cb)
+        shape_layout.addWidget(self._fill_cb)
+        layout.addWidget(self._shape_context)
+
+        layout.addStretch(1)
 
         layout.addWidget(self._create_separator())
 
-        # ── 5. Bubble ──────────────────────────────────────────────────
-        btn = _make_btn("①", "Number Bubble (B)", checkable=True)
-        self._button_group.addButton(btn)
-        self._tool_buttons[ToolType.BUBBLE] = btn
-        layout.addWidget(btn)
-
-        # Right spacer
-        layout.addStretch()
-
-        layout.addWidget(self._create_separator())
-
-        # ── 6. Undo / Redo / Copy / Save ──────────────────────────────
-        self._undo_btn = _make_btn("\uE7A7", "Undo (Ctrl+Z)")
+        # Global commands.
+        self._undo_btn = _make_btn("undo", "Undo (Ctrl+Z)")
         self._undo_btn.clicked.connect(self.undo_requested.emit)
         layout.addWidget(self._undo_btn)
 
-        self._redo_btn = _make_btn("\uE7A6", "Redo (Ctrl+Y)")
+        self._redo_btn = _make_btn("redo", "Redo (Ctrl+Y)")
         self._redo_btn.clicked.connect(self.redo_requested.emit)
         layout.addWidget(self._redo_btn)
 
-        self._clipboard_btn = _make_btn("\uE8C8", "Copy to Clipboard (Ctrl+C)")
+        self._clipboard_btn = _make_btn("copy", "Copy to clipboard (Ctrl+C)")
         self._clipboard_btn.clicked.connect(self.copy_clipboard_requested.emit)
         layout.addWidget(self._clipboard_btn)
 
-        self._save_btn = _make_btn("\uE74E", "Save File (Ctrl+S)")
+        self._save_btn = _make_btn("save", "Save file (Ctrl+S)")
         self._save_btn.clicked.connect(self.save_file_requested.emit)
         layout.addWidget(self._save_btn)
 
-        # Default selection
         self._tool_buttons[ToolType.SELECT].setChecked(True)
         self._button_group.buttonClicked.connect(self._on_tool_clicked)
+        self._update_context_controls(ToolType.SELECT)
 
     def _create_separator(self) -> QFrame:
         sep = QFrame()
         sep.setFrameShape(QFrame.Shape.VLine)
-        sep.setFixedHeight(30)
-        sep.setStyleSheet("color: #3A3A50;")
+        sep.setFixedHeight(28)
+        sep.setStyleSheet(f"color: {BORDER_SUBTLE};")
         return sep
+
+    def _update_context_controls(self, tool_type: str):
+        is_text = tool_type == ToolType.TEXT
+        is_shape = tool_type in (
+            ToolType.LINE, ToolType.ARROW, ToolType.RECT,
+            ToolType.ELLIPSE, ToolType.BUBBLE,
+        )
+        self._text_context.setVisible(is_text)
+        self._shape_context.setVisible(is_shape)
+
+        if not is_shape:
+            return
+
+        is_bubble = tool_type == ToolType.BUBBLE
+        supports_fill = tool_type in (ToolType.RECT, ToolType.ELLIPSE)
+        self._shape_context_label.setText(
+            "Bubble" if is_bubble else "Shape" if supports_fill else "Stroke"
+        )
+        self._width_spin.setVisible(not is_bubble)
+        self._fill_cb.setVisible(supports_fill)
+
+    def resizeEvent(self, event):
+        """Reduce secondary chrome at medium/small window widths."""
+        compact = event.size().width() < 1050
+        self._undo_btn.setVisible(not compact)
+        self._redo_btn.setVisible(not compact)
+        self._text_context_label.setVisible(not compact)
+        self._shape_context_label.setVisible(not compact)
+        super().resizeEvent(event)
 
     def _on_tool_clicked(self, button: QToolButton):
         for tool_type, btn in self._tool_buttons.items():
             if btn is button:
                 self._current_tool = tool_type
+                self._update_context_controls(tool_type)
                 self.tool_changed.emit(tool_type)
                 break
 
@@ -296,83 +414,97 @@ class Toolbar(QWidget):
 
     def update_scale(self, factor: float):
         """Update the sizes of toolbar elements based on a scale factor."""
-        btn_size  = int(48 * factor)
-        font_size = int(20 * factor)
-
-        fluent_font = QFont("Segoe Fluent Icons", int(12 * factor))
-
-        for btn in self._tool_buttons.values():
+        btn_size = int(44 * factor)
+        icon_size = max(20, int(24 * factor))
+        icon_buttons = list(self._tool_buttons.values()) + [
+            self._undo_btn, self._redo_btn, self._clipboard_btn, self._save_btn,
+        ]
+        for btn in icon_buttons:
             btn.setFixedSize(btn_size, btn_size)
-            btn.setFont(fluent_font)
+            btn.setIcon(_toolbar_icon(btn.property("iconName"), icon_size))
+            btn.setIconSize(QSize(icon_size, icon_size))
 
-        for btn in [self._undo_btn, self._redo_btn,
-                    self._clipboard_btn, self._save_btn]:
-            btn.setFixedSize(btn_size, btn_size)
-            btn.setFont(fluent_font)
-
-        icon_size = int(24 * factor)
-        btn_box   = int(32 * factor)
+        btn_box = int(36 * factor)
         for color_btn in [self._color_button, self._text_color_btn, self._text_bg_btn]:
             color_btn.setFixedSize(btn_box, btn_box)
             color_btn.setIconSize(QSize(icon_size, icon_size))
 
-        self._width_spin.setFixedWidth(int(70 * factor))
-        self._text_size_spin.setFixedWidth(int(70 * factor))
+        self._width_spin.setFixedWidth(int(84 * factor))
+        self._text_size_spin.setFixedWidth(int(84 * factor))
+        self.setMinimumHeight(int(64 * factor))
 
         self.setStyleSheet(f"""
             Toolbar {{
-                background: #202020;
-                border-bottom: none;
+                background: {BASE};
+                border-bottom: 1px solid {BORDER_SUBTLE};
             }}
             QToolButton {{
                 background: transparent;
-                border: none;
-                border-radius: 4px;
-                color: #FFFFFF;
-                padding: {int(8 * factor)}px;
+                border: 1px solid transparent;
+                border-radius: {CONTROL_RADIUS}px;
+                color: {TEXT_PRIMARY};
+                padding: {int(7 * factor)}px;
             }}
             QToolButton:hover {{
-                background: #333333;
-                border-radius: 0px;
+                background: {HOVER};
+                border-color: {BORDER};
             }}
             QToolButton:checked {{
-                background: #333333;
-                border-radius: 0px;
+                background: {ACCENT_SUBTLE};
+                border-color: {BORDER};
+                border-bottom: 2px solid {ACCENT};
             }}
             QToolButton:pressed {{
-                background: #2A2A2A;
+                background: {PRESSED};
             }}
             ColorButton, TextColorButton {{
                 padding: 0px;
-                border-radius: 4px;
+                background: {SURFACE};
+                border: 1px solid {BORDER};
+                border-radius: {CONTROL_RADIUS}px;
+            }}
+            ColorButton:hover, TextColorButton:hover {{
+                background: {HOVER};
+                border-color: {TEXT_SECONDARY};
+            }}
+            QLabel#contextTitle {{
+                color: {TEXT_SECONDARY};
+                font-family: 'Segoe UI Variable', 'Segoe UI';
+                font-size: {TYPE_BODY_PT}pt;
+                font-weight: 600;
+                padding: 0 2px;
             }}
             QCheckBox {{
-                color: #FFFFFF;
-                font-size: {font_size}px;
+                color: {TEXT_PRIMARY};
+                spacing: 6px;
+                font-family: 'Segoe UI Variable', 'Segoe UI';
+                font-size: {TYPE_BODY_PT}pt;
             }}
             QCheckBox::indicator {{
-                width: {int(24 * factor)}px;
-                height: {int(24 * factor)}px;
-                border: 1px solid #3A3A50;
-                background: #363650;
-                border-radius: 4px;
+                width: {int(16 * factor)}px;
+                height: {int(16 * factor)}px;
+                border: 1px solid {BORDER};
+                background: {SURFACE};
+                border-radius: 3px;
             }}
             QCheckBox::indicator:checked {{
-                background: #60CDFF;
-                border: 1px solid #60CDFF;
+                background: {ACCENT};
+                border-color: {ACCENT};
             }}
             QSpinBox {{
-                background: #363650;
-                border: 1px solid #3A3A50;
-                border-radius: 4px;
-                color: #E0E0F0;
-                padding: 4px;
-                font-size: {font_size}px;
+                background: {SURFACE};
+                border: 1px solid {BORDER};
+                border-radius: {CONTROL_RADIUS}px;
+                color: {TEXT_PRIMARY};
+                padding: 4px 8px;
+                min-height: {int(30 * factor)}px;
+                font-family: 'Segoe UI Variable', 'Segoe UI';
+                font-size: {TYPE_BODY_PT}pt;
             }}
             QSpinBox::up-button, QSpinBox::down-button {{
-                background: #2A2A3C;
+                background: {SURFACE_ALT};
                 border: none;
-                width: {int(16 * factor)}px;
+                width: {int(22 * factor)}px;
             }}
             QSpinBox::up-button {{
                 border-top-right-radius: 4px;
@@ -381,10 +513,16 @@ class Toolbar(QWidget):
                 border-bottom-right-radius: 4px;
             }}
             QSpinBox::up-button:hover, QSpinBox::down-button:hover {{
-                background: #7C5CFC;
+                background: {HOVER};
+            }}
+            QSpinBox::up-arrow, QSpinBox::down-arrow {{
+                image: none;
+                width: 0px;
+                height: 0px;
+                border: none;
             }}
             QSpinBox:focus {{
-                border-color: #7C5CFC;
+                border-color: {ACCENT};
             }}
         """)
 
@@ -405,4 +543,5 @@ class Toolbar(QWidget):
         if tool_type in self._tool_buttons:
             self._tool_buttons[tool_type].setChecked(True)
             self._current_tool = tool_type
+            self._update_context_controls(tool_type)
             self.tool_changed.emit(tool_type)
