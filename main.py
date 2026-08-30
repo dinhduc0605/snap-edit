@@ -4,6 +4,7 @@ Main entry point. Runs in system tray with global hotkey support.
 """
 import sys
 import os
+from pathlib import Path
 
 # Tắt tự động scale DPI của Qt để lấy thông số pixel thực tế (khớp với MSS)
 os.environ["QT_ENABLE_HIGHDPI_SCALING"] = "0"
@@ -79,7 +80,17 @@ class SnapEditApp:
         self._app.setPalette(palette)
 
     def _create_tray_icon(self) -> QIcon:
-        """Create a simple tray icon programmatically."""
+        """Load the bundled app icon, falling back to the generated icon."""
+        if getattr(sys, "frozen", False) and hasattr(sys, "_MEIPASS"):
+            base_path = Path(sys._MEIPASS)
+        else:
+            base_path = Path(__file__).resolve().parent
+
+        icon_path = base_path / "assets" / "icon.ico"
+        if icon_path.is_file():
+            return QIcon(str(icon_path))
+
+        # Fallback for development if the icon asset is unavailable.
         pixmap = QPixmap(64, 64)
         pixmap.fill(Qt.GlobalColor.transparent)
         painter = QPainter(pixmap)
