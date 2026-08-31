@@ -6,7 +6,7 @@ import unittest
 from unittest.mock import Mock, patch
 
 import bootstrap
-from scripts.build_windows import clean_environment, verify_dll_origins, windows_directory
+from scripts.build_windows import clean_environment, verify_dll_origins, version_resource, windows_directory
 
 
 class WindowsBuildTests(unittest.TestCase):
@@ -54,6 +54,15 @@ class WindowsBuildTests(unittest.TestCase):
             ("VCRUNTIME140.dll", "C:/python/VCRUNTIME140.dll", "BINARY"),
             ("python314.dll", "C:/python/python314.dll", "BINARY"),
         ])
+
+    def test_version_resource_uses_release_version_without_v_prefix(self):
+        resource = version_resource("v1.2.3")
+        self.assertIn("filevers=(1, 2, 3, 0)", resource)
+        self.assertIn("ProductVersion', '1.2.3.0'", resource)
+
+    def test_version_resource_rejects_non_release_version(self):
+        with self.assertRaisesRegex(ValueError, "X.Y.Z"):
+            version_resource("release-1.2.3")
 
     def test_self_test_entry_point_runs_before_importing_application(self):
         smoke = SimpleNamespace(run=Mock(return_value=1))

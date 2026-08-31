@@ -10,8 +10,46 @@ from pathlib import Path
 import subprocess
 import sys
 import uuid
+import re
 
 ROOT = Path(__file__).resolve().parents[1]
+VERSION_PATTERN = re.compile(r"^(?:v)?(\d+)\.(\d+)\.(\d+)(?:\.(\d+))?$")
+
+
+def version_resource(version):
+    """Return a PyInstaller version-resource file for a release version."""
+    match = VERSION_PATTERN.fullmatch(version)
+    if not match:
+        raise ValueError("Version must use X.Y.Z or X.Y.Z.W format")
+    parts = [int(part or 0) for part in match.groups()]
+    dotted = ".".join(str(part) for part in parts)
+    tuple_version = ", ".join(str(part) for part in parts)
+    return f'''VSVersionInfo(
+  ffi=FixedFileInfo(filevers=({tuple_version}), prodvers=({tuple_version}), mask=0x3f,
+    flags=0x0, OS=0x40004, fileType=0x1, subtype=0x0, date=(0, 0)),
+  kids=[StringFileInfo([StringTable('040904b0', [
+    StringStruct('CompanyName', 'SnapEdit'),
+    StringStruct('FileDescription', 'SnapEdit Screenshot Tool'),
+    StringStruct('FileVersion', '{dotted}'),
+    StringStruct('InternalName', 'SnapEdit'),
+    StringStruct('LegalCopyright', 'Copyright (C) 2026'),
+    StringStruct('OriginalFilename', 'SnapEdit.exe'),
+    StringStruct('ProductName', 'SnapEdit'),
+    StringStruct('ProductVersion', '{dotted}')])]),
+    VarFileInfo([VarStruct('Translation', [1033, 1200])])]
+)\n'''
+
+
+def prepare_version_file(env):
+    """Create a release-specific version resource when SNAPEDIT_VERSION is set."""
+    version = env.get("SNAPEDIT_VERSION")
+    if not version:
+        return
+    destination = ROOT / "build" / "version.txt"
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    destination.write_text(version_resource(version), encoding="utf-8")
+    env["SNAPEDIT_VERSION_FILE"] = str(destination)
+    print(f"Building SnapEdit version {version}", flush=True)
 
 
 def windows_directory(env):
@@ -64,6 +102,7 @@ def main():
     if sys.platform != "win32":
         raise SystemExit("This build targets Windows 11.")
     env = clean_environment()
+    prepare_version_file(env)
     subprocess.run(
         [sys.executable, "-m", "PyInstaller", "--clean", "--noconfirm", str(ROOT / "SnapEdit.spec")],
         cwd=ROOT, env=env, check=True,

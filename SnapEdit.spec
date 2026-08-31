@@ -53,5 +53,5 @@ exe = EXE(
     codesign_identity=None,
     entitlements_file=None,
     icon='assets/icon.ico',
-    version='version.txt',
+    version=os.environ.get('SNAPEDIT_VERSION_FILE', 'version.txt'),
 )

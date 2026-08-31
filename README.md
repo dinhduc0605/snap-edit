@@ -114,6 +114,18 @@ To compile your own standalone `.exe` from source, ensure you have `pyinstaller`
 ```bash
 python scripts/build_windows.py
 ```
+
+## GitHub release build
+
+Pushing a Git tag in the form `vX.Y.Z` (for example, `v1.0.0`) starts the
+Windows build workflow. The generated `SnapEdit.exe` is attached to the GitHub
+Release, and its Windows file/product version is set to `X.Y.Z.0` (for example,
+`1.0.0.0`).
+
+```bash
+git tag v1.0.0
+git push origin v1.0.0
+```
 The build uses a restricted DLL search path so third-party tools cannot inject
 incompatible DLLs (for example, Poppler's ICU) into the package. It then launches
 the actual executable twice with hidden test widgets: once with only Windows on
