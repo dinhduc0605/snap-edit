@@ -312,6 +312,8 @@ class SettingsDialog(QDialog):
 
         # Load current values into the widgets
         self._load_from_config()
+        from ui_scaling import WindowScaler
+        self._ui_scaler = WindowScaler(self)
 
     # ────────────────────────────────────────────────────────────────
     #  Page builders

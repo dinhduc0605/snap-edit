@@ -19,7 +19,7 @@ try:
 except Exception:
     pass
 
-from PyQt6.QtCore import Qt, QTimer
+from PyQt6.QtCore import Qt, QTimer, QRect
 from PyQt6.QtGui import QIcon, QPixmap, QPainter, QColor, QAction, QFont
 from PyQt6.QtWidgets import (
     QApplication, QSystemTrayIcon, QMenu
@@ -37,6 +37,18 @@ from theme import (
     TYPE_BODY_PT,
 )
 from windows_integration import SingleInstanceLock, show_already_running_message
+from ui_scaling import prepare_ui_fonts, WindowScaler, screen_at_cursor, screen_scale
+
+
+# Bound retained raw image pixels as well as capture count. This does not
+# constrain the active editor or silently downsample screenshots.
+_RECENT_MAX_IMAGES = 5
+_RECENT_MAX_BYTES = 64 * 1024 * 1024
+
+
+def pixmap_bytes(pixmap: QPixmap) -> int:
+    """Estimate aligned pixel storage without converting/copying the image."""
+    return ((pixmap.width() * pixmap.depth() + 31) // 32) * 4 * pixmap.height()
 
 
 class SnapEditApp:
@@ -57,6 +69,20 @@ class SnapEditApp:
         self._recent_screenshots = []
         self._region_selector = None
         self._timed_region_selector = None
+
+        # Pay lazy font/style initialization before announcing readiness or
+        # accepting capture hotkeys. No desktop image is captured at startup.
+        prepare_ui_fonts()
+        placeholder = QPixmap(1, 1)
+        placeholder.fill(Qt.GlobalColor.transparent)
+        self._prepared_editor = EditorWindow(
+            placeholder, self._config, self._recent_screenshots,
+        )
+        self._prepared_editor.ensurePolished()
+        self._prepared_editor.grab(QRect(0, 0, self._prepared_editor.width(),
+                                        self._prepared_editor._toolbar.sizeHint().height()))
+        selector = RegionSelector()
+        selector.deleteLater()
 
         self._setup_tray()
         self._setup_hotkeys()
@@ -182,6 +208,10 @@ class SnapEditApp:
         self._tray.setContextMenu(menu)
         # Keep reference to prevent GC
         self._menu = menu
+        self._menu_scaler = WindowScaler(menu, resize_window=False)
+        menu.aboutToShow.connect(
+            lambda: self._menu_scaler.apply(screen_scale(screen_at_cursor()), resize=False)
+        )
         self._tray.show()
 
         # Show startup notification
@@ -216,13 +246,23 @@ class SnapEditApp:
         QTimer.singleShot(200, self._do_region_capture)
 
     def _do_region_capture(self):
+        if self._region_selector:
+            return
         self._region_selector = RegionSelector()
         self._region_selector.region_captured.connect(self._on_region_captured)
+        self._region_selector.selection_cancelled.connect(self._on_region_cancelled)
         self._region_selector.start()
+
+    def _on_region_cancelled(self):
+        selector = self._region_selector
+        self._region_selector = None
+        if selector:
+            selector.deleteLater()
 
     def _on_region_captured(self, pixmap: QPixmap):
         if self._region_selector:
             self._region_selector.close()
+            self._region_selector.deleteLater()
             self._region_selector = None
         if pixmap and not pixmap.isNull():
             self._open_editor(pixmap)
@@ -234,6 +274,7 @@ class SnapEditApp:
     def _do_timed_region_capture(self):
         if self._timed_region_selector:
             self._timed_region_selector.close()
+            self._timed_region_selector.deleteLater()
         self._timed_region_selector = TimedRegionSelector()
         self._timed_region_selector.region_captured.connect(
             self._on_timed_region_captured
@@ -244,30 +285,46 @@ class SnapEditApp:
         self._timed_region_selector.start()
 
     def _on_timed_region_captured(self, pixmap: QPixmap):
+        if self._timed_region_selector:
+            self._timed_region_selector.deleteLater()
         self._timed_region_selector = None
         if pixmap and not pixmap.isNull():
             self._open_editor(pixmap)
 
     def _on_timed_region_cancelled(self):
+        if self._timed_region_selector:
+            self._timed_region_selector.deleteLater()
         self._timed_region_selector = None
+
+    def _remember_capture(self, pixmap: QPixmap):
+        size = pixmap_bytes(pixmap)
+        # An oversized capture can still be edited/exported at full quality;
+        # don't retain it in history or discard useful smaller recent images.
+        if pixmap.isNull() or size > _RECENT_MAX_BYTES:
+            return
+        self._recent_screenshots.insert(0, QPixmap(pixmap))
+        total = sum(pixmap_bytes(image) for image in self._recent_screenshots)
+        while (len(self._recent_screenshots) > _RECENT_MAX_IMAGES
+               or total > _RECENT_MAX_BYTES):
+            total -= pixmap_bytes(self._recent_screenshots.pop())
 
     def _open_editor(self, pixmap: QPixmap, add_to_recent: bool = True):
         """Open the editor window with the captured screenshot."""
         if add_to_recent:
-            # QPixmap is implicitly shared; avoid a full deep copy of a large
-            # screenshot on the UI thread before opening the editor.
-            self._recent_screenshots.insert(0, QPixmap(pixmap))
-            del self._recent_screenshots[5:]
+            self._remember_capture(pixmap)
 
         # Close existing editor if open
         if self._editor_window:
             self._editor_window.close()
 
-        self._editor_window = EditorWindow(
-            pixmap,
-            self._config,
-            self._recent_screenshots,
-        )
+        if self._prepared_editor is not None:
+            self._editor_window = self._prepared_editor
+            self._prepared_editor = None
+            self._editor_window.load_capture(pixmap)
+        else:
+            self._editor_window = EditorWindow(
+                pixmap, self._config, self._recent_screenshots,
+            )
         self._editor_window.closed.connect(self._on_editor_closed)
         self._editor_window.gallery_image_selected.connect(
             self._open_gallery_image
@@ -276,6 +333,7 @@ class SnapEditApp:
         self._editor_window.activateWindow()
 
     def _on_editor_closed(self):
+        # EditorWindow disposes its buffers and uses WA_DeleteOnClose.
         self._editor_window = None
 
     def _open_gallery_image(self, pixmap: QPixmap):
@@ -284,15 +342,33 @@ class SnapEditApp:
     def _open_settings(self):
         """Open the settings dialog."""
         dialog = SettingsDialog(self._config)
-        if dialog.exec():
-            # Reload hotkeys with new config
-            self._config.load()
-            self._hotkey_manager.reload(self._config)
+        try:
+            if dialog.exec():
+                # Reload hotkeys with new config
+                self._config.load()
+                self._hotkey_manager.reload(self._config)
+                # An unused editor may contain the old drawing defaults.
+                if self._prepared_editor is not None:
+                    self._prepared_editor.dispose()
+                    self._prepared_editor.deleteLater()
+                    self._prepared_editor = None
+        finally:
+            dialog._ui_scaler.dispose()
+            dialog.deleteLater()
 
     def _quit(self):
         """Clean up and exit."""
         if self._timed_region_selector:
             self._timed_region_selector.close()
+        if self._region_selector:
+            self._region_selector.close()
+        if self._editor_window:
+            self._editor_window.close()
+        if self._prepared_editor:
+            self._prepared_editor.dispose()
+            self._prepared_editor.deleteLater()
+            self._prepared_editor = None
+        self._recent_screenshots.clear()
         self._hotkey_manager.stop()
         self._tray.hide()
         QApplication.quit()

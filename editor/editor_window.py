@@ -4,6 +4,7 @@ Combines toolbar, canvas, and provides save/export functionality.
 """
 import os
 from datetime import datetime
+from PyQt6 import sip
 from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtGui import (
     QPixmap, QKeySequence, QShortcut, QColor
@@ -16,6 +17,7 @@ from editor.toolbar import Toolbar, ToolType
 from editor.canvas import AnnotationCanvas, CanvasView
 from editor.gallery_dialog import GalleryDialog
 from settings.config import Config
+from ui_scaling import WindowScaler, screen_at_cursor
 from theme import (
     BASE, BORDER_SUBTLE, TEXT_MUTED, TEXT_SECONDARY, TYPE_BODY_PT,
 )
@@ -39,7 +41,11 @@ class EditorWindow(QMainWindow):
     def __init__(self, pixmap: QPixmap, config: Config,
                  recent_screenshots=None, parent=None):
         super().__init__(parent)
+        self.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
+        self._disposed = False
         self._config = config
+        self._logical_stroke_width = float(config.stroke_width)
+        self._logical_text_size = 14.0
         self._pixmap = pixmap
         self._recent_screenshots = (
             recent_screenshots if recent_screenshots is not None else []
@@ -48,6 +54,9 @@ class EditorWindow(QMainWindow):
         self._setup_ui()
         self._setup_shortcuts()
         self._connect_signals()
+        self._ui_scaler = WindowScaler(self, resize_window=False)
+        self._ui_scaler.scale_changed.connect(self._on_ui_scale_changed)
+        self._on_ui_scale_changed(self._ui_scaler.scale)
 
     def _setup_window(self):
         self.setWindowTitle("SnapEdit — Editor")
@@ -56,7 +65,7 @@ class EditorWindow(QMainWindow):
         # Keep the initial editor size independent of screenshot dimensions.
         w = _FALLBACK_EDITOR_WIDTH
         h = _FALLBACK_EDITOR_HEIGHT
-        screen = QApplication.primaryScreen()
+        screen = screen_at_cursor()
         if screen:
             screen_rect = screen.availableGeometry()
             w = round(screen_rect.width() * _EDITOR_SCREEN_RATIO)
@@ -90,7 +99,9 @@ class EditorWindow(QMainWindow):
 
     def resizeEvent(self, event):
         if hasattr(self, "_hint_label"):
-            self._hint_label.setVisible(event.size().width() >= 900)
+            self._hint_label.setVisible(
+                event.size().width() >= 900 * (self.property("uiScale") or 1.0)
+            )
         super().resizeEvent(event)
 
     def _setup_ui(self):
@@ -107,7 +118,7 @@ class EditorWindow(QMainWindow):
         layout.addWidget(self._toolbar)
 
         # Canvas
-        self._canvas = AnnotationCanvas(self._pixmap)
+        self._canvas = AnnotationCanvas(self._pixmap, self)
         self._canvas.set_pen_color(initial_color)
         self._canvas.set_pen_width(initial_width)
         self._view = CanvasView(self._canvas)
@@ -129,9 +140,43 @@ class EditorWindow(QMainWindow):
         self._hint_label.setStyleSheet(f"color: {TEXT_MUTED};")
         self._statusbar.addPermanentWidget(self._hint_label)
 
-        # Fit after layout
-        from PyQt6.QtCore import QTimer
-        QTimer.singleShot(100, self._view.fit_in_view_nice)
+    def showEvent(self, event):
+        super().showEvent(event)
+        # Use the first laid-out frame, without an arbitrary 100 ms delay.
+        self.centralWidget().layout().activate()
+        self._view.fit_in_view_nice()
+
+    def load_capture(self, pixmap: QPixmap):
+        """Supply the first capture to the unused, prebuilt editor."""
+        self._pixmap = pixmap
+        self._canvas.set_background(pixmap)
+        self._size_label.setText(f"{pixmap.width()} × {pixmap.height()} px")
+        # Capture can take place on a different monitor from app startup.
+        screen = screen_at_cursor()
+        if screen is not None:
+            self.setScreen(screen)
+            self._ui_scaler.refresh()
+            rect = screen.availableGeometry()
+            self.resize(round(rect.width() * _EDITOR_SCREEN_RATIO),
+                        round(rect.height() * _EDITOR_SCREEN_RATIO))
+            self.move(rect.center() - self.rect().center())
+
+    def _on_ui_scale_changed(self, scale):
+        width = max(1, min(80, round(self._logical_stroke_width * scale)))
+        text_size = max(6, min(288, round(self._logical_text_size * scale)))
+        self._toolbar.apply_ui_scale(scale, width, text_size)
+        # Only defaults for NEW annotations follow DPI. Existing image content
+        # must remain unchanged when dragging the editor to another monitor.
+        self._canvas.set_annotation_scale(scale, width, text_size)
+        self._hint_label.setVisible(self.width() >= 900 * scale)
+
+    def _on_stroke_width_changed(self, width):
+        self._logical_stroke_width = width / self._ui_scaler.scale
+        self._canvas.set_pen_width(width)
+
+    def _on_text_size_changed(self, size):
+        self._logical_text_size = size / self._ui_scaler.scale
+        self._canvas.set_text_size(size)
 
     def _setup_shortcuts(self):
         # Tool shortcuts
@@ -170,11 +215,11 @@ class EditorWindow(QMainWindow):
     def _connect_signals(self):
         self._toolbar.tool_changed.connect(self._canvas.set_tool)
         self._toolbar.color_changed.connect(self._canvas.set_pen_color)
-        self._toolbar.stroke_width_changed.connect(self._canvas.set_pen_width)
+        self._toolbar.stroke_width_changed.connect(self._on_stroke_width_changed)
         self._toolbar.fill_changed.connect(self._canvas.set_fill_enabled)
         self._toolbar.text_color_changed.connect(self._canvas.set_text_color)
         self._toolbar.text_bg_color_changed.connect(self._canvas.set_text_bg_color)
-        self._toolbar.text_size_changed.connect(self._canvas.set_text_size)
+        self._toolbar.text_size_changed.connect(self._on_text_size_changed)
         self._toolbar.undo_requested.connect(self._canvas.undo)
         self._toolbar.redo_requested.connect(self._canvas.redo)
         self._toolbar.save_file_requested.connect(self._save_file)
@@ -187,10 +232,17 @@ class EditorWindow(QMainWindow):
             self._config.save_directory,
             self,
         )
-        if dialog.exec() == QDialog.DialogCode.Accepted:
-            pixmap = dialog.selected_pixmap
-            if pixmap and not pixmap.isNull():
-                self.gallery_image_selected.emit(pixmap)
+        pixmap = QPixmap()
+        try:
+            if dialog.exec() == QDialog.DialogCode.Accepted and not sip.isdeleted(dialog):
+                pixmap = QPixmap(dialog.selected_pixmap)
+        finally:
+            # Read the result before disposal; emitting it replaces this editor.
+            if not sip.isdeleted(dialog):
+                dialog.dispose()
+                dialog.deleteLater()
+        if not self._disposed and not pixmap.isNull():
+            self.gallery_image_selected.emit(pixmap)
 
     def _save_file(self):
         """Save the annotated screenshot to a file."""
@@ -215,6 +267,26 @@ class EditorWindow(QMainWindow):
         clipboard.setPixmap(pixmap)
         self._statusbar.showMessage("Copied to clipboard", 3000)
 
+    def dispose(self):
+        """Release native image buffers without waiting for Python cyclic GC."""
+        if self._disposed:
+            return
+        self._disposed = True
+        self._ui_scaler.dispose()
+        for dialog in self.findChildren(QDialog):
+            if not sip.isdeleted(dialog):
+                dialog.close()
+                if hasattr(dialog, "dispose"):
+                    dialog.dispose()
+                dialog.deleteLater()
+        self._pixmap = QPixmap()
+        # Do not clear the controller's shared recent-capture list.
+        self._recent_screenshots = []
+        self._view.setScene(None)
+        self._canvas.dispose()
+
     def closeEvent(self, event):
-        self.closed.emit()
         super().closeEvent(event)
+        if event.isAccepted() and not self._disposed:
+            self.dispose()
+            self.closed.emit()

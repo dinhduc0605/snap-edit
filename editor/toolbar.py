@@ -3,7 +3,7 @@ Toolbar widget for the SnapEdit editor.
 Provides tool selection, color picker, and stroke size controls.
 Uses emoji text icons (no external icon library required).
 """
-from PyQt6.QtCore import Qt, pyqtSignal, QSize, QPointF, QRectF
+from PyQt6.QtCore import Qt, pyqtSignal, QSize, QPointF, QRectF, QSignalBlocker
 from PyQt6.QtGui import (
     QColor, QIcon, QPainter, QPixmap, QFont, QPainterPath,
     QPen,
@@ -133,16 +133,20 @@ class ColorButton(QToolButton):
         self._update_icon()
 
     def _update_icon(self):
-        pixmap = QPixmap(24, 24)
+        scale = self.property("uiScale") or 1.0
+        size = round(24 * scale)
+        pixmap = QPixmap(size * 2, size * 2)
+        pixmap.setDevicePixelRatio(2.0)
         pixmap.fill(Qt.GlobalColor.transparent)
         painter = QPainter(pixmap)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        painter.scale(scale, scale)
         painter.setBrush(self._color)
         painter.setPen(Qt.PenStyle.NoPen)
         painter.drawRoundedRect(0, 0, 24, 24, 4, 4)
         painter.end()
         self.setIcon(QIcon(pixmap))
-        self.setIconSize(QSize(24, 24))
+        self.setIconSize(QSize(size, size))
 
     def _pick_color(self):
         color = QColorDialog.getColor(self._color, self, "Pick Color",
@@ -181,11 +185,15 @@ class TextColorButton(QToolButton):
 
     def _update_icon(self):
         size = 24
-        pixmap = QPixmap(size, size)
+        scale = self.property("uiScale") or 1.0
+        physical_size = round(size * scale)
+        pixmap = QPixmap(physical_size * 2, physical_size * 2)
+        pixmap.setDevicePixelRatio(2.0)
         pixmap.fill(Qt.GlobalColor.transparent)
         painter = QPainter(pixmap)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
         painter.setRenderHint(QPainter.RenderHint.TextAntialiasing)
+        painter.scale(scale, scale)
 
         # Draw 'A' in current text color with a lighter, elegant font
         font = QFont("Segoe UI")
@@ -201,7 +209,7 @@ class TextColorButton(QToolButton):
 
         painter.end()
         self.setIcon(QIcon(pixmap))
-        self.setIconSize(QSize(size, size))
+        self.setIconSize(QSize(physical_size, physical_size))
 
     def _pick_color(self):
         color = QColorDialog.getColor(self._color, self, "Text Color")
@@ -309,7 +317,7 @@ class Toolbar(QWidget):
         text_layout.addWidget(self._text_bg_btn)
 
         self._text_size_spin = FluentSpinBox()
-        self._text_size_spin.setRange(6, 72)
+        self._text_size_spin.setRange(6, 288)
         self._text_size_spin.setValue(14)
         self._text_size_spin.setSuffix(" pt")
         self._text_size_spin.setFixedWidth(72)
@@ -335,7 +343,7 @@ class Toolbar(QWidget):
         shape_layout.addWidget(self._color_button)
 
         self._width_spin = FluentSpinBox()
-        self._width_spin.setRange(1, 20)
+        self._width_spin.setRange(1, 80)
         self._width_spin.setValue(initial_width)
         self._width_spin.setSuffix(" px")
         self._width_spin.setFixedWidth(72)
@@ -408,12 +416,29 @@ class Toolbar(QWidget):
 
     def resizeEvent(self, event):
         """Reduce secondary chrome at medium/small window widths."""
-        compact = event.size().width() < 1050
+        self._update_compact_mode()
+        super().resizeEvent(event)
+
+    def _update_compact_mode(self):
+        compact = self.width() < 1050 * (self.property("uiScale") or 1.0)
         self._undo_btn.setVisible(not compact)
         self._redo_btn.setVisible(not compact)
         self._text_context_label.setVisible(not compact)
         self._shape_context_label.setVisible(not compact)
-        super().resizeEvent(event)
+
+    def apply_ui_scale(self, scale: float, stroke_width: int, text_size: int):
+        """Refresh raster assets and defaults after the layout is DPI-scaled."""
+        for btn in self.findChildren(QToolButton):
+            name = btn.property("iconName")
+            if name:
+                btn.setIcon(_toolbar_icon(name, round(24 * scale)))
+        for btn in (self._color_button, self._text_color_btn, self._text_bg_btn):
+            btn._update_icon()
+        # Scaling must not trigger edits of the currently selected annotation.
+        with QSignalBlocker(self._width_spin), QSignalBlocker(self._text_size_spin):
+            self._width_spin.setValue(stroke_width)
+            self._text_size_spin.setValue(text_size)
+        self._update_compact_mode()
 
     def _on_tool_clicked(self, button: QToolButton):
         for tool_type, btn in self._tool_buttons.items():

@@ -15,7 +15,7 @@ SnapEdit is a lightweight, fast, and feature-rich screenshot capture and annotat
   - ① **Number Bubbles**: Add sequential numbered bubbles (1, 2, 3...) to create step-by-step guides effortlessly.
 - **Modern UI**: Dark-themed, sleek interface using PyQt6.
 - **Easy Export**: Save to PNG, JPG, BMP or automatically copy the annotated screenshot straight to your clipboard.
-- **Gallery**: Reopen one of the five most recent captures or any image from the configured save folder directly in the editor.
+- **Gallery**: Reopen recent captures (up to five within a 64 MiB pixel-cache budget) or images from the configured save folder directly in the editor.
 - **Windows Integration**: Optionally start SnapEdit when signing in and prevent duplicate app instances.
 
 ## 🚀 Installation & Setup
@@ -80,14 +80,48 @@ While the editor window is open, you can use these shortcuts to speed up your wo
 - `Ctrl + Scroll` or `Ctrl + +/-`: Zoom In/Out
 - `Ctrl + 0`: Reset Zoom to Fit
 
+## Display scaling and capture startup
+
+SnapEdit follows each monitor's Windows **Settings → System → Display → Scale**
+for controls, icons, labels, and new annotation defaults. For example, the
+default 3 px stroke at 100% becomes 6 px at 200%. The editor's size controls show
+the scaled values and remain editable. Existing annotations are not changed by
+moving the editor between monitors; saved images retain their original pixels.
+
+Capture overlays keep physical pixel coordinates (including negative monitor
+origins), so Qt's automatic coordinate scaling is intentionally disabled. Fonts
+and the first editor are prepared before capture hotkeys become active. Normal
+region capture crops the frozen preview; timed capture grabs a fresh image only
+after its countdown finishes.
+
+Regression checks (synthetic images, no desktop capture or config writes):
+
+```bash
+python -m unittest discover -s tests -v
+```
+
+Closing an editor releases its image/scene and pending DPI work immediately;
+completed property popups and dialogs are destroyed. Recent captures stay only
+in RAM, capped at five images and 64 MiB of pixel data (about two 4K images).
+An image larger than that budget can still be edited/exported at full resolution
+but is not retained in recent history. Saved files are never removed by cache
+eviction. This budget does not include the active image, UI, or clipboard.
+
 ## ⚙️ Building the Executable
 
 To compile your own standalone `.exe` from source, ensure you have `pyinstaller` installed, then run:
 
 ```bash
-pyinstaller --name "SnapEdit" --windowed --icon "icon.ico" --version-file "version.txt" --clean --onefile main.py
+python scripts/build_windows.py
 ```
-*The compiled executable will be located in the `dist/` folder.*
+The build uses a restricted DLL search path so third-party tools cannot inject
+incompatible DLLs (for example, Poppler's ICU) into the package. It then launches
+the actual executable twice with hidden test widgets: once with only Windows on
+PATH, and once with the caller's PATH. No screenshot, hotkey, clipboard or user
+configuration is touched. A failed smoke test fails the build command.
+
+The executable is `dist/SnapEdit.exe`; smoke-test reports are in `build/`.
+Keep `SnapEdit.spec` in Git. Do not regenerate it with a generic one-file command.
 
 ## 📄 License
 Copyright (C) 2026. All rights reserved.

@@ -2,6 +2,8 @@
 Canvas (QGraphicsScene) for the SnapEdit editor.
 Manages the background screenshot and all annotation items.
 """
+import weakref
+from PyQt6 import sip
 from PyQt6.QtCore import Qt, QRectF, QPointF, pyqtSignal, QEvent
 from PyQt6.QtGui import (
     QPixmap, QColor, QPainter, QUndoStack, QUndoCommand
@@ -13,6 +15,7 @@ from PyQt6.QtWidgets import (
     QDialog, QApplication, QVBoxLayout, QFrame
 )
 from ui_widgets import FluentSpinBox
+from ui_scaling import WindowScaler
 from editor.toolbar import ToolType
 from theme import (
     ACCENT, BASE, BORDER, BORDER_SUBTLE, CONTENT, CONTROL_RADIUS,
@@ -141,12 +144,33 @@ class RemoveItemCommand(QUndoCommand):
 
 
 
-class TextSettingsPopup(QDialog):
-    """A custom frameless dialog for text settings that doesn't auto-close when dialogs open."""
-    
+class _ItemSettingsPopup(QDialog):
+    """Transient property editor, destroyed (not just hidden) on completion."""
+
     def __init__(self, item, parent=None):
         super().__init__(parent)
         self.item = item
+        self._disposed = False
+        self.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
+
+    def dispose(self):
+        if self._disposed:
+            return
+        self._disposed = True
+        self.item = None
+        if hasattr(self, "_ui_scaler"):
+            self._ui_scaler.dispose()
+
+    def done(self, result):
+        self.dispose()
+        super().done(result)
+
+
+class TextSettingsPopup(_ItemSettingsPopup):
+    """A custom frameless dialog for text settings that doesn't auto-close when dialogs open."""
+
+    def __init__(self, item, parent=None):
+        super().__init__(item, parent)
         self.setWindowFlags(Qt.WindowType.Tool | Qt.WindowType.FramelessWindowHint)
         self.setStyleSheet(_POPUP_STYLESHEET)
         self.setMinimumWidth(340)
@@ -222,7 +246,7 @@ class TextSettingsPopup(QDialog):
 
         # --- Text size row ---
         size_spin = FluentSpinBox()
-        size_spin.setRange(6, 72)
+        size_spin.setRange(6, 288)
         size_spin.setValue(item.font_size)
         size_spin.setSuffix(" pt")
         size_spin.setFixedSize(110, 40)
@@ -231,6 +255,7 @@ class TextSettingsPopup(QDialog):
             item.set_font_size(val)
         size_spin.valueChanged.connect(_apply_size)
         layout.addWidget(_make_row("Text size", size_spin))
+        self._ui_scaler = WindowScaler(self)
 
     def changeEvent(self, event):
         if event.type() == QEvent.Type.ActivationChange:
@@ -242,12 +267,11 @@ class TextSettingsPopup(QDialog):
         super().changeEvent(event)
 
 
-class ShapeSettingsPopup(QDialog):
+class ShapeSettingsPopup(_ItemSettingsPopup):
     """A custom frameless dialog for shape settings that doesn't auto-close when dialogs open."""
     
     def __init__(self, item, parent=None):
-        super().__init__(parent)
-        self.item = item
+        super().__init__(item, parent)
         self.setWindowFlags(Qt.WindowType.Tool | Qt.WindowType.FramelessWindowHint)
         self.setStyleSheet(_POPUP_STYLESHEET)
         self.setMinimumWidth(340)
@@ -303,7 +327,7 @@ class ShapeSettingsPopup(QDialog):
 
         # --- Stroke size row ---
         size_spin = FluentSpinBox()
-        size_spin.setRange(1, 40)
+        size_spin.setRange(1, 80)
         size_spin.setValue(item.pen_width)
         size_spin.setSuffix(" px")
         size_spin.setFixedSize(110, 40)
@@ -324,6 +348,8 @@ class ShapeSettingsPopup(QDialog):
             fill_cb.toggled.connect(_toggle_fill)
             
             layout.addWidget(_make_row("Fill", fill_cb))
+
+        self._ui_scaler = WindowScaler(self)
 
     def changeEvent(self, event):
         if event.type() == QEvent.Type.ActivationChange:
@@ -347,6 +373,8 @@ class AnnotationCanvas(QGraphicsScene):
     def __init__(self, pixmap: QPixmap = None, parent=None):
         super().__init__(parent)
         self._background_item = None
+        self._disposed = False
+        self._settings_popup = None
         self._current_tool = ToolType.SELECT
         self._pen_color = QColor("#FF3B30")
         self._pen_width = 3
@@ -359,9 +387,49 @@ class AnnotationCanvas(QGraphicsScene):
         self._text_color = QColor("#FF0000")
         self._text_bg_color = QColor(255, 255, 255, 180)
         self._text_size = 14
+        self._annotation_scale = 1.0
 
         if pixmap:
             self.set_background(pixmap)
+
+    def dispose(self):
+        if self._disposed:
+            return
+        self._disposed = True
+        popup = self._settings_popup
+        self._settings_popup = None
+        if popup is not None and not sip.isdeleted(popup):
+            popup.close()
+        self._drawing = False
+        self._current_draw_item = None
+        self._undo_stack.clear()
+        self.clear()
+        self._background_item = None
+
+    def _show_settings_popup(self, popup_type, item, event):
+        old_popup = self._settings_popup
+        if old_popup is not None and not sip.isdeleted(old_popup):
+            old_popup.close()
+        popup = popup_type(item, event.widget())
+        self._settings_popup = popup
+        scene_ref, popup_ref = weakref.ref(self), weakref.ref(popup)
+
+        def forget_popup():
+            scene = scene_ref()
+            if scene is not None and scene._settings_popup is popup_ref():
+                scene._settings_popup = None
+
+        popup.destroyed.connect(forget_popup)
+        popup.move(event.screenPos())
+        popup.show()
+        popup.raise_()
+        popup.activateWindow()
+
+    def set_annotation_scale(self, scale: float, pen_width: int, text_size: int):
+        """Scale defaults only; never mutate existing/selected image content."""
+        self._annotation_scale = scale
+        self._pen_width = pen_width
+        self._text_size = text_size
 
     def set_background(self, pixmap: QPixmap):
         """Set the screenshot as the scene background."""
@@ -557,7 +625,9 @@ class AnnotationCanvas(QGraphicsScene):
         from editor.items.bubble_item import BubbleItem
         number = self._bubble_counter + 1
         item = BubbleItem(number, self._pen_color)
-        item.setPos(pos.x() - 16, pos.y() - 16)
+        item.setScale(self._annotation_scale)
+        radius = 16 * self._annotation_scale
+        item.setPos(pos.x() - radius, pos.y() - radius)
         cmd = AddBubbleCommand(self, item, number)
         self._undo_stack.push(cmd)
         self.item_added.emit()
@@ -609,19 +679,11 @@ class AnnotationCanvas(QGraphicsScene):
 
         if isinstance(item, TextItem):
             item.setSelected(True)
-            self._settings_popup = TextSettingsPopup(item, event.widget())
-            self._settings_popup.move(event.screenPos())
-            self._settings_popup.show()
-            self._settings_popup.raise_()
-            self._settings_popup.activateWindow()
+            self._show_settings_popup(TextSettingsPopup, item, event)
             return
         elif isinstance(item, (RectItem, EllipseItem, LineItem, ArrowItem)):
             item.setSelected(True)
-            self._shape_settings_popup = ShapeSettingsPopup(item, event.widget())
-            self._shape_settings_popup.move(event.screenPos())
-            self._shape_settings_popup.show()
-            self._shape_settings_popup.raise_()
-            self._shape_settings_popup.activateWindow()
+            self._show_settings_popup(ShapeSettingsPopup, item, event)
             return
 
         super().contextMenuEvent(event)

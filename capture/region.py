@@ -24,6 +24,7 @@ from PyQt6.QtGui import (
     QFontMetrics, QRegion
 )
 from PyQt6.QtWidgets import QWidget, QApplication
+from ui_scaling import pixel_font, screen_scale, screen_at_cursor
 
 
 class RegionSelector(QWidget):
@@ -31,8 +32,8 @@ class RegionSelector(QWidget):
 
     The user clicks and drags to define a capture region. The overlay dims
     the entire screen except for the selected rectangle, which remains clear.
-    Upon mouse release, the selected region is captured using `mss` and
-    emitted via the `region_captured` signal.
+    Upon mouse release, the selected region is cropped from the cached
+    desktop and emitted via the `region_captured` signal.
 
     Signals:
         region_captured(QPixmap): Emitted with the captured region image.
@@ -71,6 +72,11 @@ class RegionSelector(QWidget):
         self._desktop_pixmap = QPixmap()
         self._dimmed_pixmap = QPixmap()
         self._first_drag_frame = False
+        self._label_styles = {}
+        # Shape fonts before showing the overlay, not during the first drag.
+        for screen in QApplication.screens():
+            self._prepare_label_style(screen_scale(screen))
+        self._set_label_screen(screen_at_cursor())
 
         # Configure window flags for frameless, always-on-top overlay
         self.setWindowFlags(
@@ -83,6 +89,19 @@ class RegionSelector(QWidget):
         self.setAttribute(Qt.WidgetAttribute.WA_OpaquePaintEvent)
         self.setCursor(QCursor(Qt.CursorShape.CrossCursor))
         self.setMouseTracking(True)
+
+    def _prepare_label_style(self, scale):
+        if scale not in self._label_styles:
+            font = pixel_font(QFont("Segoe UI", 11, QFont.Weight.Bold), scale)
+            metrics = QFontMetrics(font)
+            metrics.horizontalAdvance("0123456789 ×")
+            self._label_styles[scale] = (font, metrics)
+        return self._label_styles[scale]
+
+    def _set_label_screen(self, screen):
+        self._ui_scale = screen_scale(screen)
+        self._label_font, self._label_metrics = self._prepare_label_style(self._ui_scale)
+        self._border_padding = max(3, round(3 * self._ui_scale))
 
     def start(self):
         """Show the overlay covering all screens and begin selection mode.
@@ -179,7 +198,7 @@ class RegionSelector(QWidget):
                 painter.drawPixmap(rect, self._desktop_pixmap, rect)
 
             # Draw selection border
-            pen = QPen(self._BORDER_COLOR, 2, Qt.PenStyle.SolidLine)
+            pen = QPen(self._BORDER_COLOR, 2 * self._ui_scale, Qt.PenStyle.SolidLine)
             painter.setPen(pen)
             painter.drawRect(rect)
 
@@ -190,17 +209,16 @@ class RegionSelector(QWidget):
 
     def _dimension_label_rect(self, rect: QRect) -> QRect:
         """Return the pixels occupied by the live dimension label."""
-        font = QFont("Segoe UI", 11, QFont.Weight.Bold)
-        metrics = QFontMetrics(font, self)
+        metrics = self._label_metrics
         label_text = f"{rect.width()} × {rect.height()}"
-        padding = 6
+        padding = round(6 * self._ui_scale)
         text_w = max(
             metrics.horizontalAdvance(label_text),
             metrics.boundingRect(label_text).width(),
         )
         label_w = text_w + padding * 2
         label_h = metrics.height() + padding * 2
-        gap = 6
+        gap = round(6 * self._ui_scale)
 
         # Align to the selection's right edge, then clamp to both horizontal
         # edges of the overlay.
@@ -238,14 +256,13 @@ class RegionSelector(QWidget):
         label_text = f"{width} × {height}"
 
         # Configure font
-        font = QFont("Segoe UI", 11, QFont.Weight.Bold)
-        painter.setFont(font)
+        painter.setFont(self._label_font)
 
         # Draw label background
         label_rect = self._dimension_label_rect(rect)
         painter.setPen(Qt.PenStyle.NoPen)
         painter.setBrush(self._LABEL_BG_COLOR)
-        painter.drawRoundedRect(label_rect, 4, 4)
+        painter.drawRoundedRect(label_rect, 4 * self._ui_scale, 4 * self._ui_scale)
 
         # Draw label text
         painter.setPen(self._LABEL_TEXT_COLOR)
@@ -258,6 +275,9 @@ class RegionSelector(QWidget):
     def mousePressEvent(self, event):
         """Handle mouse press to begin region selection."""
         if event.button() == Qt.MouseButton.LeftButton:
+            # Keep the starting monitor's DPI for the whole drag so the label
+            # doesn't jump or leave stale dirty pixels across mixed-DPI screens.
+            self._set_label_screen(QApplication.screenAt(event.globalPosition().toPoint()))
             self._origin = event.pos()
             self._current = event.pos()
             self._selecting = True
@@ -278,8 +298,9 @@ class RegionSelector(QWidget):
                 self._first_drag_frame = False
                 # Paint only the thin border and label synchronously so the
                 # first visual feedback is immediate even for a 4K region.
-                outer = QRegion(new_rect.adjusted(-3, -3, 3, 3))
-                inner = QRegion(new_rect.adjusted(3, 3, -3, -3))
+                padding = self._border_padding
+                outer = QRegion(new_rect.adjusted(-padding, -padding, padding, padding))
+                inner = QRegion(new_rect.adjusted(padding, padding, -padding, -padding))
                 first_visual = outer.subtracted(inner).united(
                     QRegion(
                         self._dimension_label_rect(new_rect).adjusted(
@@ -300,8 +321,9 @@ class RegionSelector(QWidget):
         for rect in (old_rect, new_rect):
             if not rect.isValid():
                 continue
-            outer = QRegion(rect.adjusted(-3, -3, 3, 3))
-            inner = QRegion(rect.adjusted(3, 3, -3, -3))
+            padding = self._border_padding
+            outer = QRegion(rect.adjusted(-padding, -padding, padding, padding))
+            inner = QRegion(rect.adjusted(padding, padding, -padding, -padding))
             dirty = dirty.united(outer.subtracted(inner))
             label_dirty = self._dimension_label_rect(rect).adjusted(-2, -2, 2, 2)
             dirty = dirty.united(QRegion(label_dirty))
@@ -323,14 +345,19 @@ class RegionSelector(QWidget):
                 self.update()
                 return
 
-            # Hide the overlay before capturing to avoid capturing it
+            # Crop the exact undimmed frame shown during selection; avoid a
+            # second screen grab on release. Timed capture still uses live MSS.
             self.hide()
-            QApplication.processEvents()
-
-            # Capture the selected region
-            pixmap = self._capture_region(self._selection_rect)
+            if not self._desktop_pixmap.isNull():
+                crop_rect = self._selection_rect.intersected(self._desktop_pixmap.rect())
+                pixmap = self._desktop_pixmap.copy(crop_rect) if crop_rect.isValid() else QPixmap()
+            else:
+                QApplication.processEvents(QEventLoop.ProcessEventsFlag.ExcludeUserInputEvents)
+                pixmap = self._capture_region(self._selection_rect)
             if pixmap and not pixmap.isNull():
                 self.region_captured.emit(pixmap)
+            else:
+                self.selection_cancelled.emit()
 
             self.close()
 

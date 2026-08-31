@@ -19,6 +19,7 @@ class FluentSpinBox(QSpinBox):
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
 
         color = QColor(TEXT_SECONDARY if self.isEnabled() else TEXT_DISABLED)
+        scale = self.property("uiScale") or 1.0
         pen = QPen(color, 1.6)
         pen.setCapStyle(Qt.PenCapStyle.RoundCap)
         pen.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
@@ -40,6 +41,10 @@ class FluentSpinBox(QSpinBox):
 
             cx = float(rect.center().x())
             cy = float(rect.center().y())
+            painter.save()
+            painter.translate(cx, cy)
+            painter.scale(scale, scale)
+            cx = cy = 0.0
             offset = -0.5 if points_up else 0.5
             if points_up:
                 painter.drawLine(
@@ -59,5 +64,6 @@ class FluentSpinBox(QSpinBox):
                     QPointF(cx, cy + 1.5 + offset),
                     QPointF(cx + 3.5, cy - 1.5 + offset),
                 )
+            painter.restore()
 
         painter.end()

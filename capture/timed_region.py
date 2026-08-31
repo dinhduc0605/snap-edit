@@ -8,6 +8,7 @@ from PyQt6.QtWidgets import (
 from pynput.keyboard import Key, Listener
 
 from capture.region import RegionSelector
+from ui_scaling import WindowScaler, pixel_font
 from theme import (
     ACCENT, ACCENT_HOVER, BASE, BORDER, CONTROL_RADIUS, HOVER, SURFACE,
     SURFACE_ALT, TEXT_PRIMARY, TEXT_SECONDARY, TYPE_BODY_PT,
@@ -110,6 +111,7 @@ class TimedRegionSelector(RegionSelector):
         self._cancel_button.clicked.connect(self._cancel)
         options_layout.addWidget(self._cancel_button)
         self._options.hide()
+        self._options_scaler = WindowScaler(self._options, resize_window=False)
 
     def start(self):
         """Show a live translucent selector across the virtual desktop."""
@@ -149,11 +151,11 @@ class TimedRegionSelector(RegionSelector):
 
     def _draw_selection_border(self, painter: QPainter, rect: QRect):
         painter.setBrush(Qt.BrushStyle.NoBrush)
-        painter.setPen(QPen(self._BORDER_COLOR, 2, Qt.PenStyle.SolidLine))
+        painter.setPen(QPen(self._BORDER_COLOR, 2 * self._ui_scale, Qt.PenStyle.SolidLine))
         painter.drawRect(rect)
 
     def _draw_countdown(self, painter: QPainter, rect: QRect):
-        diameter = 88
+        diameter = round(88 * self._ui_scale)
         center = rect.center()
         badge = QRect(
             center.x() - diameter // 2,
@@ -161,11 +163,13 @@ class TimedRegionSelector(RegionSelector):
             diameter,
             diameter,
         )
-        painter.setPen(QPen(QColor(255, 255, 255, 90), 1))
+        painter.setPen(QPen(QColor(255, 255, 255, 90), self._ui_scale))
         painter.setBrush(self._COUNTDOWN_BG)
         painter.drawEllipse(badge)
         painter.setPen(QColor(255, 255, 255))
-        painter.setFont(QFont("Segoe UI Variable", 30, QFont.Weight.DemiBold))
+        painter.setFont(pixel_font(
+            QFont("Segoe UI Variable", 30, QFont.Weight.DemiBold), self._ui_scale
+        ))
         painter.drawText(
             badge, Qt.AlignmentFlag.AlignCenter, str(self._remaining_seconds)
         )
@@ -205,6 +209,8 @@ class TimedRegionSelector(RegionSelector):
         self.update()
 
     def _position_options(self):
+        self._options_scaler.apply(self._ui_scale, resize=False)
+        scale = self._ui_scale
         # Polish before measuring so the QSS font and padding are included.
         # Resizing from the layout hint prevents text clipping at different
         # Windows DPI/font settings.
@@ -215,26 +221,26 @@ class TimedRegionSelector(RegionSelector):
         )
         self._delay_combo.setMinimumWidth(
             max(
-                136,
-                self._delay_combo.fontMetrics().horizontalAdvance(longest_delay) + 72,
+                round(136 * scale),
+                self._delay_combo.fontMetrics().horizontalAdvance(longest_delay) + round(72 * scale),
             )
         )
         self._delay_label.setMinimumWidth(
             self._delay_label.fontMetrics().horizontalAdvance(
                 self._delay_label.text()
-            ) + 16
+            ) + round(16 * scale)
         )
         for button in (self._capture_button, self._cancel_button):
             button.setMinimumWidth(
                 max(
-                    112,
-                    button.fontMetrics().horizontalAdvance(button.text()) + 56,
+                    round(112 * scale),
+                    button.fontMetrics().horizontalAdvance(button.text()) + round(56 * scale),
                 )
             )
         size = self._options.layout().sizeHint()
         self._options.resize(size)
         rect = self._selection_rect
-        gap = 10
+        gap = round(10 * scale)
         x = rect.right() - size.width() + 1
         below_y = rect.bottom() + gap + 1
         above_y = rect.top() - size.height() - gap

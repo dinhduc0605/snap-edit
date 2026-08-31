@@ -14,6 +14,7 @@ from theme import (
     TEXT_MUTED, TEXT_PRIMARY, TEXT_SECONDARY, TYPE_BODY_PT, TYPE_CAPTION_PT,
     TYPE_TITLE_PT,
 )
+from ui_scaling import WindowScaler
 
 
 _IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".bmp", ".webp"}
@@ -96,6 +97,7 @@ class GalleryDialog(QDialog):
         self._recent_screenshots = list(recent_screenshots[:5])
         self._save_directory = Path(save_directory)
         self._selected_pixmap = QPixmap()
+        self._disposed = False
 
         self.setWindowTitle("SnapEdit — Gallery")
         self.setMinimumSize(760, 560)
@@ -122,10 +124,37 @@ class GalleryDialog(QDialog):
         saved_card.setToolTip(str(self._save_directory))
         root.addWidget(saved_card, 1)
 
-        self._populate_recent()
-        self._populate_saved()
         self._recent_list.itemClicked.connect(self._select_item)
         self._saved_list.itemClicked.connect(self._select_item)
+        self._ui_scaler = WindowScaler(self)
+        self._thumbnail_size = _THUMBNAIL_SIZE * self._ui_scaler.scale
+        self._populate_recent()
+        self._populate_saved()
+        self._ui_scaler.scale_changed.connect(self._refresh_thumbnails)
+
+    def dispose(self):
+        """Called after the caller has copied the selected result."""
+        if self._disposed:
+            return
+        self._disposed = True
+        self._ui_scaler.dispose()
+        self._selected_pixmap = QPixmap()
+        self._recent_screenshots.clear()
+        self._recent_list.clear()
+        self._saved_list.clear()
+
+    def _refresh_thumbnails(self, scale):
+        if self._disposed:
+            return
+        self._thumbnail_size = _THUMBNAIL_SIZE * scale
+        # Re-render at the actual monitor DPI, not a permanent 4x allocation.
+        self._recent_list.clear()
+        self._populate_recent()
+        for index in range(self._saved_list.count()):
+            item = self._saved_list.item(index)
+            path = item.data(Qt.ItemDataRole.UserRole + 1)
+            if path:
+                item.setIcon(QIcon(self._read_pixmap(Path(path), self._thumbnail_size)))
 
     @property
     def selected_pixmap(self) -> QPixmap:
@@ -167,7 +196,7 @@ class GalleryDialog(QDialog):
             return
         for index, pixmap in enumerate(self._recent_screenshots):
             thumbnail = pixmap.scaled(
-                _THUMBNAIL_SIZE,
+                self._thumbnail_size,
                 Qt.AspectRatioMode.KeepAspectRatio,
                 Qt.TransformationMode.SmoothTransformation,
             )
@@ -198,7 +227,7 @@ class GalleryDialog(QDialog):
             return
 
         for path in paths:
-            thumbnail = self._read_pixmap(path, _THUMBNAIL_SIZE)
+            thumbnail = self._read_pixmap(path, self._thumbnail_size)
             if thumbnail.isNull():
                 continue
             item = QListWidgetItem(QIcon(thumbnail), path.name)
@@ -236,7 +265,7 @@ class GalleryDialog(QDialog):
         payload = item.data(Qt.ItemDataRole.UserRole + 1)
         if source == "recent" and isinstance(payload, int):
             if 0 <= payload < len(self._recent_screenshots):
-                self._selected_pixmap = self._recent_screenshots[payload].copy()
+                self._selected_pixmap = QPixmap(self._recent_screenshots[payload])
         elif source == "saved" and payload:
             self._selected_pixmap = self._read_pixmap(Path(payload))
 
