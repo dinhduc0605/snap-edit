@@ -15,6 +15,7 @@ SnapEdit is a lightweight, fast, and feature-rich screenshot capture and annotat
   - ① **Number Bubbles**: Add sequential numbered bubbles (1, 2, 3...) to create step-by-step guides effortlessly.
 - **Modern UI**: Dark-themed, sleek interface using PyQt6.
 - **Easy Export**: Save to PNG, JPG, BMP or automatically copy the annotated screenshot straight to your clipboard.
+- **Screen text extraction**: Press `Alt+Shift+4`, select an area, and SnapEdit copies recognized text to the clipboard using Windows OCR.
 - **Gallery**: Reopen recent captures (up to five within a 64 MiB pixel-cache budget) or images from the configured save folder directly in the editor.
 - **Windows Integration**: Optionally start SnapEdit when signing in and prevent duplicate app instances.
 
@@ -57,8 +58,14 @@ If you prefer to run the application from the Python source code, follow these s
 - **Capture Fullscreen**: `Alt+Shift+1`
 - **Capture Region**: `Alt+Shift+2`
 - **Timed Region Capture**: `Alt+Shift+3`
+- **Copy text from screen**: `Alt+Shift+4`
 
 *Note: You can easily customize these hotkeys by right-clicking the system tray icon and selecting **Settings**.*
+
+Screen text extraction uses the OCR language packs installed for the current
+Windows user. Install the required language pack with its OCR feature enabled
+in **Settings → Time & language → Language & region** before scanning that
+language.
 
 ## 🛠️ Editor Shortcuts
 

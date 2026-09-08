@@ -4,3 +4,9 @@ Pillow>=10.0.0
 pynput>=1.7.0
 pyautogui>=0.9.54
 numpy>=1.26.0
+winrt-Windows.Foundation==3.2.1
+winrt-Windows.Foundation.Collections==3.2.1
+winrt-Windows.Graphics.Imaging==3.2.1
+winrt-Windows.Globalization==3.2.1
+winrt-Windows.Media.Ocr==3.2.1
+winrt-Windows.Storage.Streams==3.2.1

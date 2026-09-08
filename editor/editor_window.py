@@ -10,8 +10,8 @@ from PyQt6.QtGui import (
     QPixmap, QKeySequence, QShortcut, QColor
 )
 from PyQt6.QtWidgets import (
-    QMainWindow, QWidget, QVBoxLayout,
-    QFileDialog, QApplication, QStatusBar, QLabel, QDialog
+    QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
+    QFileDialog, QApplication, QStatusBar, QLabel, QDialog, QToolButton,
 )
 from editor.toolbar import Toolbar, ToolType
 from editor.canvas import AnnotationCanvas, CanvasView
@@ -37,6 +37,7 @@ class EditorWindow(QMainWindow):
 
     closed = pyqtSignal()
     gallery_image_selected = pyqtSignal(QPixmap)
+    settings_requested = pyqtSignal()
 
     def __init__(self, pixmap: QPixmap, config: Config,
                  recent_screenshots=None, parent=None):
@@ -45,7 +46,10 @@ class EditorWindow(QMainWindow):
         self._disposed = False
         self._config = config
         self._logical_stroke_width = float(config.stroke_width)
-        self._logical_text_size = 14.0
+        self._logical_text_size = float(config.text_size)
+        self._logical_bubble_size = float(config.bubble_size)
+        self._text_color = QColor(config.get("text_color", "#FF0000"))
+        self._text_bg_color = QColor(config.get("text_bg_color", "#FFFFFF"))
         self._pixmap = pixmap
         self._recent_screenshots = (
             recent_screenshots if recent_screenshots is not None else []
@@ -92,9 +96,22 @@ class EditorWindow(QMainWindow):
                 color: %s;
                 padding: 0 4px;
             }
+            QStatusBar QToolButton {
+                background: transparent;
+                border: 1px solid transparent;
+                border-radius: 4px;
+                color: %s;
+                min-width: 28px;
+                min-height: 28px;
+                padding: 2px 6px;
+            }
+            QStatusBar QToolButton:hover {
+                background: %s;
+                border-color: %s;
+            }
         """ % (
             BASE, BASE, TEXT_SECONDARY, BORDER_SUBTLE, TYPE_BODY_PT,
-            TEXT_SECONDARY,
+            TEXT_SECONDARY, TEXT_SECONDARY, BORDER_SUBTLE, TEXT_SECONDARY,
         ))
 
     def resizeEvent(self, event):
@@ -114,19 +131,30 @@ class EditorWindow(QMainWindow):
         # Toolbar
         initial_color = QColor(self._config.stroke_color)
         initial_width = self._config.stroke_width
-        self._toolbar = Toolbar(initial_color, initial_width)
+        self._toolbar = Toolbar(
+            initial_color,
+            initial_width,
+            initial_bubble_size=round(self._logical_bubble_size),
+            initial_text_size=round(self._logical_text_size),
+            initial_text_color=self._text_color,
+            initial_text_bg_color=self._text_bg_color,
+            initial_fill=bool(self._config.get("fill_shapes", False)),
+        )
         layout.addWidget(self._toolbar)
 
         # Canvas
         self._canvas = AnnotationCanvas(self._pixmap, self)
         self._canvas.set_pen_color(initial_color)
         self._canvas.set_pen_width(initial_width)
+        self._canvas.set_text_color(self._text_color)
+        self._canvas.set_text_bg_color(self._text_bg_color)
+        self._canvas.set_fill_enabled(bool(self._config.get("fill_shapes", False)))
         self._view = CanvasView(self._canvas)
         layout.addWidget(self._view)
 
         # Status bar
         self._statusbar = QStatusBar()
-        self._statusbar.setFixedHeight(28)
+        self._statusbar.setFixedHeight(40)
         self.setStatusBar(self._statusbar)
         self._size_label = QLabel(
             f"{self._pixmap.width()} × {self._pixmap.height()} px"
@@ -134,11 +162,41 @@ class EditorWindow(QMainWindow):
         self._size_label.setAccessibleName("Image dimensions")
         self._statusbar.addWidget(self._size_label)
 
+        zoom_controls = QWidget()
+        zoom_layout = QHBoxLayout(zoom_controls)
+        zoom_layout.setContentsMargins(4, 0, 4, 0)
+        zoom_layout.setSpacing(2)
+        zoom_out = QToolButton()
+        zoom_out.setText("−")
+        zoom_out.setToolTip("Zoom out (Ctrl+-)")
+        zoom_out.setAccessibleName("Zoom out")
+        zoom_out.clicked.connect(self._view.zoom_out)
+        zoom_layout.addWidget(zoom_out)
+        self._zoom_label = QLabel("100%")
+        self._zoom_label.setMinimumWidth(48)
+        self._zoom_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._zoom_label.setAccessibleName("Zoom level")
+        zoom_layout.addWidget(self._zoom_label)
+        zoom_in = QToolButton()
+        zoom_in.setText("+")
+        zoom_in.setToolTip("Zoom in (Ctrl++)")
+        zoom_in.setAccessibleName("Zoom in")
+        zoom_in.clicked.connect(self._view.zoom_in)
+        zoom_layout.addWidget(zoom_in)
+        fit_button = QToolButton()
+        fit_button.setText("Fit")
+        fit_button.setToolTip("Fit image to view (Ctrl+0)")
+        fit_button.setAccessibleName("Fit image to view")
+        fit_button.clicked.connect(self._view.zoom_reset)
+        zoom_layout.addWidget(fit_button)
+        self._statusbar.addPermanentWidget(zoom_controls)
+
         self._hint_label = QLabel(
             "V Select   ·   Ctrl+wheel Zoom   ·   Ctrl+Z Undo   ·   Del Delete"
         )
         self._hint_label.setStyleSheet(f"color: {TEXT_MUTED};")
         self._statusbar.addPermanentWidget(self._hint_label)
+        self._view.zoom_changed.connect(self._on_zoom_changed)
 
     def showEvent(self, event):
         super().showEvent(event)
@@ -164,19 +222,52 @@ class EditorWindow(QMainWindow):
     def _on_ui_scale_changed(self, scale):
         width = max(1, min(80, round(self._logical_stroke_width * scale)))
         text_size = max(6, min(288, round(self._logical_text_size * scale)))
-        self._toolbar.apply_ui_scale(scale, width, text_size)
+        bubble_size = max(16, min(128, round(self._logical_bubble_size * scale)))
+        self._toolbar.apply_ui_scale(scale, width, text_size, bubble_size)
         # Only defaults for NEW annotations follow DPI. Existing image content
         # must remain unchanged when dragging the editor to another monitor.
-        self._canvas.set_annotation_scale(scale, width, text_size)
+        self._canvas.set_annotation_scale(scale, width, text_size, bubble_size)
         self._hint_label.setVisible(self.width() >= 900 * scale)
 
     def _on_stroke_width_changed(self, width):
         self._logical_stroke_width = width / self._ui_scaler.scale
         self._canvas.set_pen_width(width)
+        self._persist_editor_property("stroke_width", round(self._logical_stroke_width))
 
     def _on_text_size_changed(self, size):
         self._logical_text_size = size / self._ui_scaler.scale
         self._canvas.set_text_size(size)
+        self._persist_editor_property("text_size", round(self._logical_text_size))
+
+    def _on_bubble_size_changed(self, size):
+        self._logical_bubble_size = size / self._ui_scaler.scale
+        self._canvas.set_bubble_size(self._logical_bubble_size)
+        self._persist_editor_property("bubble_size", round(self._logical_bubble_size))
+
+    def _on_color_changed(self, color):
+        self._canvas.set_pen_color(color)
+        self._persist_editor_property("stroke_color", color.name())
+
+    def _on_text_color_changed(self, color):
+        self._text_color = QColor(color)
+        self._canvas.set_text_color(color)
+        self._persist_editor_property("text_color", color.name())
+
+    def _on_text_bg_color_changed(self, color):
+        self._text_bg_color = QColor(color)
+        self._canvas.set_text_bg_color(color)
+        self._persist_editor_property("text_bg_color", color.name())
+
+    def _on_fill_changed(self, enabled):
+        self._canvas.set_fill_enabled(enabled)
+        self._persist_editor_property("fill_shapes", bool(enabled))
+
+    def _persist_editor_property(self, key, value):
+        """Persist editor defaults without breaking lightweight test configs."""
+        if not hasattr(self._config, "_config_path"):
+            self._config._data[key] = value
+            return
+        self._config.set(key, value)
 
     def _setup_shortcuts(self):
         # Tool shortcuts
@@ -207,6 +298,9 @@ class EditorWindow(QMainWindow):
         QShortcut(QKeySequence.StandardKey.Save, self).activated.connect(self._save_file)
         QShortcut(QKeySequence.StandardKey.Copy, self).activated.connect(self._copy_clipboard)
         QShortcut(QKeySequence("Ctrl+G"), self).activated.connect(self._open_gallery)
+        QShortcut(QKeySequence("Ctrl+,"), self).activated.connect(
+            self.settings_requested.emit
+        )
 
         # Delete
         QShortcut(QKeySequence(Qt.Key.Key_Delete), self).activated.connect(self._canvas.delete_selected)
@@ -214,17 +308,34 @@ class EditorWindow(QMainWindow):
 
     def _connect_signals(self):
         self._toolbar.tool_changed.connect(self._canvas.set_tool)
-        self._toolbar.color_changed.connect(self._canvas.set_pen_color)
+        self._toolbar.color_changed.connect(self._on_color_changed)
         self._toolbar.stroke_width_changed.connect(self._on_stroke_width_changed)
-        self._toolbar.fill_changed.connect(self._canvas.set_fill_enabled)
-        self._toolbar.text_color_changed.connect(self._canvas.set_text_color)
-        self._toolbar.text_bg_color_changed.connect(self._canvas.set_text_bg_color)
+        self._toolbar.fill_changed.connect(self._on_fill_changed)
+        self._toolbar.text_color_changed.connect(self._on_text_color_changed)
+        self._toolbar.text_bg_color_changed.connect(self._on_text_bg_color_changed)
         self._toolbar.text_size_changed.connect(self._on_text_size_changed)
+        self._toolbar.bubble_size_changed.connect(self._on_bubble_size_changed)
         self._toolbar.undo_requested.connect(self._canvas.undo)
         self._toolbar.redo_requested.connect(self._canvas.redo)
         self._toolbar.save_file_requested.connect(self._save_file)
         self._toolbar.copy_clipboard_requested.connect(self._copy_clipboard)
         self._toolbar.gallery_requested.connect(self._open_gallery)
+        self._canvas.undo_stack.canUndoChanged.connect(
+            lambda enabled: self._toolbar.set_command_state(
+                enabled, self._canvas.undo_stack.canRedo()
+            )
+        )
+        self._canvas.undo_stack.canRedoChanged.connect(
+            lambda enabled: self._toolbar.set_command_state(
+                self._canvas.undo_stack.canUndo(), enabled
+            )
+        )
+        self._toolbar.set_command_state(
+            self._canvas.undo_stack.canUndo(), self._canvas.undo_stack.canRedo()
+        )
+
+    def _on_zoom_changed(self, value: float):
+        self._zoom_label.setText(f"{round(value * 100)}%")
 
     def _open_gallery(self):
         dialog = GalleryDialog(

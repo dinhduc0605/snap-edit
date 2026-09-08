@@ -6,6 +6,9 @@ import sys
 import os
 from pathlib import Path
 
+
+_APP_USER_MODEL_ID = "SnapEdit"
+
 # Tắt tự động scale DPI của Qt để lấy thông số pixel thực tế (khớp với MSS)
 os.environ["QT_ENABLE_HIGHDPI_SCALING"] = "0"
 os.environ["QT_AUTO_SCREEN_SCALE_FACTOR"] = "0"
@@ -15,12 +18,12 @@ os.environ["QT_SCALE_FACTOR"] = "1"
 import ctypes
 try:
     ctypes.windll.shcore.SetProcessDpiAwareness(2)
-    ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID("snapedit.app.1.0")
+    ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(_APP_USER_MODEL_ID)
 except Exception:
     pass
 
 from PyQt6.QtCore import Qt, QTimer, QRect
-from PyQt6.QtGui import QIcon, QPixmap, QPainter, QColor, QAction, QFont
+from PyQt6.QtGui import QIcon, QPixmap, QPainter, QColor, QAction, QFont, QKeySequence
 from PyQt6.QtWidgets import (
     QApplication, QSystemTrayIcon, QMenu
 )
@@ -36,8 +39,11 @@ from theme import (
     ACCENT, BASE, BORDER, HOVER, SURFACE, SURFACE_ALT, TEXT_PRIMARY,
     TYPE_BODY_PT,
 )
-from windows_integration import SingleInstanceLock, show_already_running_message
+from windows_integration import (
+    SingleInstanceLock, ensure_notification_identity, show_already_running_message,
+)
 from ui_scaling import prepare_ui_fonts, WindowScaler, screen_at_cursor, screen_scale
+from ocr.worker import OcrWorker
 
 
 # Bound retained raw image pixels as well as capture count. This does not
@@ -69,6 +75,8 @@ class SnapEditApp:
         self._recent_screenshots = []
         self._region_selector = None
         self._timed_region_selector = None
+        self._ocr_selector = None
+        self._ocr_worker = None
 
         # Pay lazy font/style initialization before announcing readiness or
         # accepting capture hotkeys. No desktop image is captured at startup.
@@ -144,6 +152,8 @@ class SnapEditApp:
     def _setup_tray(self):
         icon = self._create_tray_icon()
         self._app.setWindowIcon(icon)
+        icon_path = self._icon_asset_path()
+        ensure_notification_identity(_APP_USER_MODEL_ID, "SnapEdit", icon_path)
         self._tray = QSystemTrayIcon()
         self._tray.setIcon(icon)
         self._tray.setToolTip("SnapEdit — Screenshot Capture & Edit")
@@ -180,16 +190,31 @@ class SnapEditApp:
 
         # Capture actions
         fullscreen_action = QAction("Capture full screen", menu)
+        fullscreen_action.setShortcut(QKeySequence(self._config.get("hotkeys.fullscreen", "")))
         fullscreen_action.triggered.connect(self._capture_fullscreen)
         menu.addAction(fullscreen_action)
 
         region_action = QAction("Capture region", menu)
+        region_action.setShortcut(QKeySequence(self._config.get("hotkeys.region", "")))
         region_action.triggered.connect(self._capture_region)
         menu.addAction(region_action)
 
         timed_region_action = QAction("Timed region capture", menu)
+        timed_region_action.setShortcut(QKeySequence(self._config.get("hotkeys.timed_region", "")))
         timed_region_action.triggered.connect(self._capture_timed_region)
         menu.addAction(timed_region_action)
+
+        ocr_action = QAction("Text OCR", menu)
+        ocr_action.setShortcut(QKeySequence(self._config.get("hotkeys.ocr", "")))
+        ocr_action.triggered.connect(self._capture_text)
+        menu.addAction(ocr_action)
+
+        self._tray_capture_actions = {
+            "fullscreen": fullscreen_action,
+            "region": region_action,
+            "timed_region": timed_region_action,
+            "ocr": ocr_action,
+        }
 
         menu.addSeparator()
 
@@ -215,20 +240,41 @@ class SnapEditApp:
         self._tray.show()
 
         # Show startup notification
-        self._tray.showMessage(
-            "SnapEdit is running",
-            "The application is running in the system tray.",
-            QSystemTrayIcon.MessageIcon.Information,
-            3000
-        )
+        self._show_notification("Ứng dụng đang chạy trong system tray.", 3000)
+
+    def _icon_asset_path(self) -> Path:
+        """Return a persistent icon path suitable for a Start-menu shortcut."""
+        if getattr(sys, "frozen", False):
+            # In a one-file build, _MEIPASS is removed when the app exits.
+            # The executable already contains the application icon and stays
+            # available to Windows when it renders later notifications.
+            return Path(sys.executable).resolve()
+        return Path(__file__).resolve().parent / "assets" / "icon.ico"
+
+    def _show_notification(
+        self,
+        message: str,
+        timeout_ms: int,
+        message_icon: QSystemTrayIcon.MessageIcon = QSystemTrayIcon.MessageIcon.NoIcon,
+    ):
+        """Show a tray notification with the app identity supplied by Windows."""
+        # The header and app icon come from the Start-menu shortcut registered
+        # above. Keep Qt's title empty so the body contains only the message.
+        self._tray.showMessage("", message, message_icon, timeout_ms)
 
     def _setup_hotkeys(self):
         self._hotkey_manager = HotkeyManager(self._config)
+        self._hotkey_manager.registration_failed.connect(
+            lambda message: self._show_notification(
+                message, 10000, QSystemTrayIcon.MessageIcon.Warning,
+            )
+        )
         self._hotkey_manager.fullscreen_triggered.connect(self._capture_fullscreen)
         self._hotkey_manager.region_triggered.connect(self._capture_region)
         self._hotkey_manager.timed_region_triggered.connect(
             self._capture_timed_region
         )
+        self._hotkey_manager.ocr_triggered.connect(self._capture_text)
         self._hotkey_manager.start()
 
     def _capture_fullscreen(self):
@@ -296,6 +342,50 @@ class SnapEditApp:
             self._timed_region_selector.deleteLater()
         self._timed_region_selector = None
 
+    def _capture_text(self):
+        """Open the region picker and OCR the selected pixels to clipboard."""
+        QTimer.singleShot(200, self._do_text_capture)
+
+    def _do_text_capture(self):
+        if self._ocr_selector or (self._ocr_worker and self._ocr_worker.isRunning()):
+            return
+        self._ocr_selector = RegionSelector()
+        self._ocr_selector.region_captured.connect(self._on_text_region_captured)
+        self._ocr_selector.selection_cancelled.connect(self._on_text_selection_cancelled)
+        self._ocr_selector.start()
+
+    def _on_text_selection_cancelled(self):
+        selector = self._ocr_selector
+        self._ocr_selector = None
+        if selector:
+            selector.deleteLater()
+
+    def _on_text_region_captured(self, pixmap: QPixmap):
+        self._on_text_selection_cancelled()
+        if pixmap.isNull() or (self._ocr_worker and self._ocr_worker.isRunning()):
+            return
+        self._ocr_worker = OcrWorker(pixmap, self._app)
+        self._ocr_worker.text_ready.connect(self._on_ocr_ready)
+        self._ocr_worker.failed.connect(self._on_ocr_failed)
+        self._ocr_worker.finished.connect(self._on_ocr_finished)
+        self._ocr_worker.start()
+
+    def _on_ocr_ready(self, text: str):
+        if not text:
+            self._show_notification("Không tìm thấy text trong vùng đã chọn.", 3000)
+            return
+        QApplication.clipboard().setText(text)
+        self._show_notification(f"{text} đã được copy vào clipboard.", 2500)
+
+    def _on_ocr_failed(self, message: str):
+        self._show_notification(message, 7000, QSystemTrayIcon.MessageIcon.Warning)
+
+    def _on_ocr_finished(self):
+        worker = self._ocr_worker
+        self._ocr_worker = None
+        if worker:
+            worker.deleteLater()
+
     def _remember_capture(self, pixmap: QPixmap):
         size = pixmap_bytes(pixmap)
         # An oversized capture can still be edited/exported at full quality;
@@ -329,6 +419,7 @@ class SnapEditApp:
         self._editor_window.gallery_image_selected.connect(
             self._open_gallery_image
         )
+        self._editor_window.settings_requested.connect(self._open_settings)
         self._editor_window.show()
         self._editor_window.activateWindow()
 
@@ -347,6 +438,7 @@ class SnapEditApp:
                 # Reload hotkeys with new config
                 self._config.load()
                 self._hotkey_manager.reload(self._config)
+                self._refresh_tray_shortcuts()
                 # An unused editor may contain the old drawing defaults.
                 if self._prepared_editor is not None:
                     self._prepared_editor.dispose()
@@ -356,12 +448,25 @@ class SnapEditApp:
             dialog._ui_scaler.dispose()
             dialog.deleteLater()
 
+    def _refresh_tray_shortcuts(self):
+        """Reflect saved hotkeys in the visible tray menu."""
+        for name, action in getattr(self, "_tray_capture_actions", {}).items():
+            action.setShortcut(QKeySequence(self._config.get(f"hotkeys.{name}", "")))
+
     def _quit(self):
         """Clean up and exit."""
         if self._timed_region_selector:
             self._timed_region_selector.close()
         if self._region_selector:
             self._region_selector.close()
+        if self._ocr_selector:
+            self._ocr_selector.close()
+        if self._ocr_worker and self._ocr_worker.isRunning():
+            self._ocr_worker.requestInterruption()
+            self._ocr_worker.wait(3000)
+            if self._ocr_worker.isRunning():
+                self._ocr_worker.terminate()
+                self._ocr_worker.wait(1000)
         if self._editor_window:
             self._editor_window.close()
         if self._prepared_editor:

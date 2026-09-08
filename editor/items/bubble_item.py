@@ -19,14 +19,13 @@ from PyQt6.QtWidgets import (
 
 
 # Visual constants
-_BUBBLE_SIZE: float = 32.0
+_DEFAULT_BUBBLE_SIZE: float = 32.0
 _SHADOW_BLUR: int = 8
 _SHADOW_OFFSET = QPointF(2.0, 2.0)
 _SHADOW_COLOR = QColor(0, 0, 0, 80)
 _TEXT_COLOR = QColor(255, 255, 255)
 _FONT_FAMILY = "Segoe UI"
-_FONT_PIXEL_SIZE = 16
-_TEXT_MAX_WIDTH = _BUBBLE_SIZE - 8.0
+_DEFAULT_FONT_PIXEL_SIZE = 16
 
 
 class BubbleItem(QGraphicsItem):
@@ -43,6 +42,8 @@ class BubbleItem(QGraphicsItem):
         The number displayed inside the bubble.
     bubble_color : QColor
         Fill colour (default red).
+    bubble_size : float
+        Base diameter in scene units (default 32).
     parent : QGraphicsItem | None
         Optional parent item.
     """
@@ -52,11 +53,13 @@ class BubbleItem(QGraphicsItem):
         number: int,
         bubble_color: QColor = QColor("#FF0000"),
         parent: QGraphicsItem | None = None,
+        bubble_size: float = _DEFAULT_BUBBLE_SIZE,
     ) -> None:
         super().__init__(parent)
 
         self._number: int = number
         self._bubble_color: QColor = QColor(bubble_color)
+        self._bubble_size: float = max(16.0, min(128.0, float(bubble_size)))
 
         # Flags – movable and selectable, NOT resizable
         self.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIsMovable, True)
@@ -91,6 +94,19 @@ class BubbleItem(QGraphicsItem):
         self._bubble_color = QColor(color)
         self.update()
 
+    @property
+    def bubble_size(self) -> float:
+        return self._bubble_size
+
+    def set_bubble_size(self, size: float) -> None:
+        """Set the base diameter while preserving the DPI item scale."""
+        size = max(16.0, min(128.0, float(size)))
+        if abs(size - self._bubble_size) < 0.01:
+            return
+        self.prepareGeometryChange()
+        self._bubble_size = size
+        self.update()
+
     # ------------------------------------------------------------------
     # QGraphicsItem overrides
     # ------------------------------------------------------------------
@@ -103,14 +119,14 @@ class BubbleItem(QGraphicsItem):
         margin = _SHADOW_BLUR / 2.0 + 4.0
         return QRectF(
             -margin, -margin,
-            _BUBBLE_SIZE + 2 * margin,
-            _BUBBLE_SIZE + 2 * margin,
+            self._bubble_size + 2 * margin,
+            self._bubble_size + 2 * margin,
         )
 
     def shape(self) -> QPainterPath:
         """Circular hit-test shape matching the visible bubble."""
         path = QPainterPath()
-        path.addEllipse(QRectF(0.0, 0.0, _BUBBLE_SIZE, _BUBBLE_SIZE))
+        path.addEllipse(QRectF(0.0, 0.0, self._bubble_size, self._bubble_size))
         return path
 
     def paint(
@@ -125,7 +141,7 @@ class BubbleItem(QGraphicsItem):
         # --- Circle ---
         painter.setPen(Qt.PenStyle.NoPen)
         painter.setBrush(QBrush(self._bubble_color))
-        painter.drawEllipse(QRectF(0.0, 0.0, _BUBBLE_SIZE, _BUBBLE_SIZE))
+        painter.drawEllipse(QRectF(0.0, 0.0, self._bubble_size, self._bubble_size))
 
         # --- Subtle highlight ring when selected ---
         if self.isSelected():
@@ -135,13 +151,15 @@ class BubbleItem(QGraphicsItem):
             painter.setBrush(Qt.BrushStyle.NoBrush)
             painter.drawEllipse(QRectF(
                 -1.0, -1.0,
-                _BUBBLE_SIZE + 2.0, _BUBBLE_SIZE + 2.0,
+                self._bubble_size + 2.0, self._bubble_size + 2.0,
             ))
 
         # --- Number text ---
         text = str(self._number)
         font = QFont(_FONT_FAMILY)
-        font.setPixelSize(_FONT_PIXEL_SIZE)
+        font.setPixelSize(max(8, round(
+            _DEFAULT_FONT_PIXEL_SIZE * self._bubble_size / _DEFAULT_BUBBLE_SIZE
+        )))
         font.setBold(True)
 
         # Build a glyph path so centering uses the visible strokes instead of
@@ -151,17 +169,18 @@ class BubbleItem(QGraphicsItem):
         text_bounds = text_path.boundingRect()
 
         # Keep multi-digit labels comfortably inside the fixed-size bubble.
-        if text_bounds.width() > _TEXT_MAX_WIDTH:
+        text_max_width = self._bubble_size - 8.0
+        if text_bounds.width() > text_max_width:
             fitted_size = max(
                 8,
-                int(_FONT_PIXEL_SIZE * _TEXT_MAX_WIDTH / text_bounds.width()),
+                int(font.pixelSize() * text_max_width / text_bounds.width()),
             )
             font.setPixelSize(fitted_size)
             text_path = QPainterPath()
             text_path.addText(QPointF(0.0, 0.0), font, text)
             text_bounds = text_path.boundingRect()
 
-        bubble_center = QPointF(_BUBBLE_SIZE / 2.0, _BUBBLE_SIZE / 2.0)
+        bubble_center = QPointF(self._bubble_size / 2.0, self._bubble_size / 2.0)
         painter.save()
         painter.translate(bubble_center - text_bounds.center())
         painter.fillPath(text_path, QBrush(_TEXT_COLOR))

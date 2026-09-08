@@ -5,6 +5,7 @@ No user config, hotkeys, desktop capture, clipboard, or tray is touched.
 import json
 from pathlib import Path
 import sys
+import time
 import traceback
 
 
@@ -15,7 +16,7 @@ def run(report_path):
         import main
         from PyQt6 import QtCore
         from PyQt6.QtCore import QEvent, QPointF
-        from PyQt6.QtGui import QColor, QFont, QPixmap
+        from PyQt6.QtGui import QColor, QFont, QPainter, QPixmap
         from PyQt6.QtWidgets import QApplication
         from copy import deepcopy
         from capture.region import RegionSelector
@@ -23,6 +24,7 @@ def run(report_path):
         from editor.gallery_dialog import GalleryDialog
         from settings.config import Config, DEFAULT_CONFIG
         from ui_scaling import prepare_ui_fonts
+        from ocr.worker import OcrWorker
 
         report.update(qt=QtCore.qVersion(), pyqt=QtCore.PYQT_VERSION_STR,
                       qtcore_path=QtCore.__file__, main_path=main.__file__)
@@ -37,6 +39,12 @@ def run(report_path):
         app.setFont(QFont("Segoe UI Variable", 10))
         app.setQuitOnLastWindowClosed(False)
         prepare_ui_fonts()
+        if report["frozen"]:
+            from winrt.windows.media.ocr import OcrEngine
+            report["ocr_languages"] = [
+                language.language_tag
+                for language in OcrEngine.available_recognizer_languages
+            ]
         controller = main.SnapEditApp.__new__(main.SnapEditApp)
         controller._app = app
         controller._apply_dark_palette()
@@ -48,6 +56,31 @@ def run(report_path):
         config._data["save_directory"] = str(Path(report_path).with_suffix(".no-images"))
         screenshot = QPixmap(640, 360)
         screenshot.fill(QColor("#274060"))
+        painter = QPainter(screenshot)
+        painter.setPen(QColor("white"))
+        painter.setFont(QFont("Segoe UI", 32))
+        painter.drawText(24, 64, "SnapEdit OCR 123")
+        painter.end()
+        ocr_worker = OcrWorker(screenshot)
+        ocr_text = []
+        ocr_errors = []
+        ocr_worker.text_ready.connect(ocr_text.append)
+        ocr_worker.failed.connect(ocr_errors.append)
+        ocr_worker.start()
+        deadline = time.monotonic() + 15
+        while ocr_worker.isRunning() and time.monotonic() < deadline:
+            app.processEvents()
+            time.sleep(0.01)
+        if ocr_worker.isRunning():
+            ocr_worker.terminate()
+            ocr_worker.wait(1000)
+            raise RuntimeError("Frozen OCR smoke test timed out.")
+        app.processEvents()
+        if ocr_errors:
+            raise RuntimeError(f"Frozen OCR smoke test failed: {ocr_errors[0]}")
+        report["ocr_text"] = ocr_text[0] if ocr_text else ""
+        if "napEdit" not in report["ocr_text"] or "OCR" not in report["ocr_text"]:
+            raise RuntimeError(f"Frozen OCR returned unexpected text: {report['ocr_text']!r}")
         editor = EditorWindow(screenshot, config)
         editor.ensurePolished()
         editor._canvas._add_text(QPointF(30, 30))

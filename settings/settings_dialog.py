@@ -1,18 +1,16 @@
 """
 Settings dialog for SnapEdit.
-Provides a modern dark-themed dialog with tabs for Hotkeys, Storage, and Drawing Defaults.
+Provides a modern dark-themed dialog with tabs for General, Hotkeys, and Storage.
 """
 from PyQt6.QtCore import Qt
-from PyQt6.QtGui import QColor, QKeySequence
+from PyQt6.QtGui import QKeySequence
 from PyQt6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QLabel, QLineEdit,
     QPushButton, QComboBox, QCheckBox,
     QWidget, QFileDialog, QKeySequenceEdit,
-    QGroupBox, QFormLayout, QColorDialog, QListWidget,
-    QStackedWidget, QFrame, QMessageBox,
+    QGroupBox, QFormLayout, QListWidget,
+    QStackedWidget, QFrame, QMessageBox, QScrollArea,
 )
-from ui_widgets import FluentSpinBox
-
 from settings.config import Config
 from theme import (
     ACCENT, ACCENT_HOVER, ACCENT_PRESSED, BASE, BORDER,
@@ -40,6 +38,13 @@ QFrame#settingsFooter {{
     background: {BASE};
     border-top: 1px solid {BORDER_SUBTLE};
 }}
+QScrollArea#settingsPageScroll {{
+    background: transparent;
+    border: none;
+}}
+QStackedWidget#settingsPages {{
+    background: transparent;
+}}
 QLabel#settingsTitle {{
     color: {TEXT_PRIMARY};
     font-size: {TYPE_DISPLAY_PT}pt;
@@ -63,8 +68,8 @@ QListWidget {{
 }}
 QListWidget::item {{
     border-radius: {CONTROL_RADIUS}px;
-    padding: 12px 14px;
-    margin: 2px 0;
+    padding: 8px 12px;
+    margin: 1px 0;
 }}
 QListWidget::item:hover {{
     background: {HOVER};
@@ -79,7 +84,7 @@ QGroupBox {{
     border: 1px solid {BORDER};
     border-radius: {OVERLAY_RADIUS}px;
     margin-top: 18px;
-    padding: 24px 20px 20px 20px;
+    padding: 16px;
     color: {TEXT_PRIMARY};
     font-weight: 600;
 }}
@@ -99,8 +104,8 @@ QLineEdit, QSpinBox, QComboBox, QKeySequenceEdit {{
     color: {TEXT_PRIMARY};
     border: 1px solid {BORDER};
     border-radius: {CONTROL_RADIUS}px;
-    padding: 8px 12px;
-    min-height: 32px;
+    padding: 6px 10px;
+    min-height: 30px;
     selection-background-color: {ACCENT};
     selection-color: {BASE};
 }}
@@ -151,7 +156,7 @@ QPushButton {{
     color: {TEXT_PRIMARY};
     border: 1px solid {BORDER};
     border-radius: {CONTROL_RADIUS}px;
-    padding: 8px 18px;
+    padding: 6px 14px;
     font-size: {TYPE_BODY_PT}pt;
     min-height: 30px;
 }}
@@ -160,6 +165,11 @@ QPushButton:hover {{
 }}
 QPushButton:pressed {{
     background: {PRESSED};
+}}
+QPushButton:focus, QListWidget:focus, QLineEdit:focus, QSpinBox:focus,
+QComboBox:focus, QKeySequenceEdit:focus {{
+    outline: none;
+    border-color: {ACCENT};
 }}
 QPushButton#btnSave {{
     background: {ACCENT};
@@ -188,46 +198,6 @@ QScrollBar::handle:vertical {{
 """
 
 
-class _ColorButton(QPushButton):
-    """A small push‑button that displays and lets the user pick a colour."""
-
-    def __init__(self, initial_color: str = "#FF3B30", parent=None):
-        super().__init__(parent)
-        self._color = QColor(initial_color)
-        self.setFixedSize(48, 36)
-        self.setCursor(Qt.CursorShape.PointingHandCursor)
-        self._update_swatch()
-        self.clicked.connect(self._pick_color)
-
-    # ── public API ───────────────────────────────────────────────────
-    @property
-    def color(self) -> str:
-        """Return the currently selected colour as a hex string."""
-        return self._color.name()
-
-    @color.setter
-    def color(self, hex_color: str):
-        self._color = QColor(hex_color)
-        self._update_swatch()
-
-    # ── internals ────────────────────────────────────────────────────
-    def _update_swatch(self):
-        self.setStyleSheet(
-            f"background: {self._color.name()};"
-            f"border: 1px solid {BORDER};"
-            f"border-radius: {CONTROL_RADIUS}px;"
-        )
-
-    def _pick_color(self):
-        chosen = QColorDialog.getColor(
-            self._color, self, "Pick Color",
-            QColorDialog.ColorDialogOption.ShowAlphaChannel,
-        )
-        if chosen.isValid():
-            self._color = chosen
-            self._update_swatch()
-
-
 class SettingsDialog(QDialog):
     """Application settings dialog using a Fluent left-nav silhouette."""
 
@@ -236,7 +206,7 @@ class SettingsDialog(QDialog):
         self._config = config
 
         self.setWindowTitle("SnapEdit - Settings")
-        self.setMinimumSize(780, 580)
+        self.setMinimumSize(720, 560)
         self.resize(860, 640)
         self.setStyleSheet(_STYLESHEET)
 
@@ -247,12 +217,12 @@ class SettingsDialog(QDialog):
         header = QFrame()
         header.setObjectName("settingsHeader")
         header_layout = QVBoxLayout(header)
-        header_layout.setContentsMargins(24, 16, 24, 16)
+        header_layout.setContentsMargins(20, 12, 20, 12)
         header_layout.setSpacing(2)
         title = QLabel("Settings")
         title.setObjectName("settingsTitle")
         subtitle = QLabel(
-            "Customize startup, capture, storage, and drawing defaults"
+            "Customize startup, capture, and storage behavior"
         )
         subtitle.setObjectName("settingsSubtitle")
         header_layout.addWidget(title)
@@ -261,32 +231,38 @@ class SettingsDialog(QDialog):
 
         body = QWidget()
         body_layout = QHBoxLayout(body)
-        body_layout.setContentsMargins(16, 16, 16, 16)
-        body_layout.setSpacing(16)
+        body_layout.setContentsMargins(12, 12, 12, 12)
+        body_layout.setSpacing(12)
 
         self._nav = QListWidget()
-        self._nav.setFixedWidth(168)
+        self._nav.setMinimumWidth(168)
+        self._nav.setMaximumWidth(192)
         self._nav.setSpacing(0)
-        self._nav.addItems(["General", "Hotkeys", "Storage", "Drawing"])
+        self._nav.addItems(["General", "Hotkeys", "Storage"])
         self._nav.setAccessibleName("Settings sections")
         body_layout.addWidget(self._nav)
 
         self._stack = QStackedWidget()
-        body_layout.addWidget(self._stack, 1)
+        self._stack.setObjectName("settingsPages")
+        self._page_scroll = QScrollArea()
+        self._page_scroll.setObjectName("settingsPageScroll")
+        self._page_scroll.setFrameShape(QFrame.Shape.NoFrame)
+        self._page_scroll.setWidgetResizable(True)
+        self._page_scroll.setWidget(self._stack)
+        body_layout.addWidget(self._page_scroll, 1)
         root.addWidget(body, 1)
 
         self._build_general_tab()
         self._build_hotkeys_tab()
         self._build_storage_tab()
-        self._build_drawing_tab()
         self._nav.currentRowChanged.connect(self._stack.setCurrentIndex)
         self._nav.setCurrentRow(0)
 
         footer = QFrame()
         footer.setObjectName("settingsFooter")
         btn_layout = QHBoxLayout(footer)
-        btn_layout.setContentsMargins(16, 12, 16, 12)
-        btn_layout.setSpacing(10)
+        btn_layout.setContentsMargins(12, 8, 12, 8)
+        btn_layout.setSpacing(8)
 
         self._btn_reset = QPushButton("Reset defaults")
         self._btn_reset.setCursor(Qt.CursorShape.PointingHandCursor)
@@ -349,10 +325,12 @@ class SettingsDialog(QDialog):
         self._hk_fullscreen = QKeySequenceEdit()
         self._hk_region = QKeySequenceEdit()
         self._hk_timed_region = QKeySequenceEdit()
+        self._hk_ocr = QKeySequenceEdit()
 
         form.addRow(QLabel("Full screen"), self._hk_fullscreen)
         form.addRow(QLabel("Region"), self._hk_region)
         form.addRow(QLabel("Timed region"), self._hk_timed_region)
+        form.addRow(QLabel("Copy text from screen"), self._hk_ocr)
 
         layout.addWidget(group)
         layout.addStretch()
@@ -444,42 +422,6 @@ class SettingsDialog(QDialog):
         layout.addStretch()
         self._stack.addWidget(tab)
 
-    def _build_drawing_tab(self):
-        """Build the Drawing Defaults settings page."""
-        tab = QWidget()
-        layout = QVBoxLayout(tab)
-        layout.setContentsMargins(8, 4, 8, 8)
-        layout.setSpacing(8)
-        self._add_page_header(
-            layout,
-            "Drawing",
-            "Set the initial appearance of new annotations.",
-        )
-
-        group = QGroupBox("Annotation defaults")
-        form = QFormLayout(group)
-        form.setLabelAlignment(Qt.AlignmentFlag.AlignLeft)
-        form.setHorizontalSpacing(24)
-        form.setVerticalSpacing(12)
-
-        # Stroke colour
-        self._stroke_color_btn = _ColorButton()
-        form.addRow(QLabel("Default color"), self._stroke_color_btn)
-
-        # Stroke width
-        self._stroke_width_spin = FluentSpinBox()
-        self._stroke_width_spin.setRange(1, 20)
-        self._stroke_width_spin.setSuffix(" px")
-        form.addRow(QLabel("Stroke width"), self._stroke_width_spin)
-
-        # Bubble colour
-        self._bubble_color_btn = _ColorButton()
-        form.addRow(QLabel("Bubble color"), self._bubble_color_btn)
-
-        layout.addWidget(group)
-        layout.addStretch()
-        self._stack.addWidget(tab)
-
     # ────────────────────────────────────────────────────────────────
     #  Config <‑> Widget synchronisation
     # ────────────────────────────────────────────────────────────────
@@ -500,6 +442,9 @@ class SettingsDialog(QDialog):
                 self._format_hotkey_display(hotkeys.get("timed_region", ""))
             )
         )
+        self._hk_ocr.setKeySequence(
+            QKeySequence.fromString(self._format_hotkey_display(hotkeys.get("ocr", "")))
+        )
 
         self._save_dir_edit.setText(self._config.save_directory)
 
@@ -511,10 +456,6 @@ class SettingsDialog(QDialog):
         self._auto_copy_cb.setChecked(
             self._config.get("auto_copy_clipboard", False)
         )
-
-        self._stroke_color_btn.color = self._config.stroke_color
-        self._stroke_width_spin.setValue(self._config.stroke_width)
-        self._bubble_color_btn.color = self._config.bubble_color
 
     @staticmethod
     def _format_hotkey_display(hotkey_str: str) -> str:
@@ -572,16 +513,15 @@ class SettingsDialog(QDialog):
             "hotkeys.timed_region",
             self._format_hotkey_store(self._hk_timed_region.keySequence()),
         )
+        self._config.set(
+            "hotkeys.ocr",
+            self._format_hotkey_store(self._hk_ocr.keySequence()),
+        )
 
         # Storage
         self._config.set("save_directory", self._save_dir_edit.text())
         self._config.set("default_format", self._format_combo.currentText().lower())
         self._config.set("auto_copy_clipboard", self._auto_copy_cb.isChecked())
-
-        # Drawing defaults
-        self._config.set("stroke_color", self._stroke_color_btn.color)
-        self._config.set("stroke_width", self._stroke_width_spin.value())
-        self._config.set("bubble_color", self._bubble_color_btn.color)
 
         self._config.save()
         self.accept()

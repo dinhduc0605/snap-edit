@@ -20,6 +20,12 @@ venv.bak/
 icon.png
 test_icons.png
 tesseract_bin/
+vendor_foundation/
+vendor_foundation2/
+vendor/**/__pycache__/
+vendor/**/*.dist-info/
+!vendor/**/*.pyd
+!vendor/**/*.dll
 
 # IDEs and Editors
 .vscode/

@@ -11,10 +11,10 @@ from PyQt6.QtGui import (
 from PyQt6.QtWidgets import (
     QGraphicsScene, QGraphicsPixmapItem, QGraphicsView,
     QGraphicsItem,
-    QWidget, QHBoxLayout, QLabel, QColorDialog, QToolButton,
+    QWidget, QHBoxLayout, QLabel, QToolButton,
     QDialog, QApplication, QVBoxLayout, QFrame
 )
-from ui_widgets import FluentSpinBox
+from ui_widgets import BasicColorDialog, FluentSpinBox
 from ui_scaling import WindowScaler
 from editor.toolbar import ToolType
 from theme import (
@@ -173,28 +173,29 @@ class TextSettingsPopup(_ItemSettingsPopup):
         super().__init__(item, parent)
         self.setWindowFlags(Qt.WindowType.Tool | Qt.WindowType.FramelessWindowHint)
         self.setStyleSheet(_POPUP_STYLESHEET)
-        self.setMinimumWidth(340)
+        self.setMinimumWidth(300)
 
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(12, 12, 12, 12)
-        layout.setSpacing(8)
+        layout.setContentsMargins(8, 8, 8, 8)
+        layout.setSpacing(4)
 
         # --- Helper: build a widget action row ---
         def _make_row(label_text, widget):
             container = QWidget()
             row = QHBoxLayout(container)
-            row.setContentsMargins(12, 6, 12, 6)
-            row.setSpacing(12)
+            row.setContentsMargins(8, 4, 8, 4)
+            row.setSpacing(8)
             lbl = QLabel(label_text)
-            lbl.setFixedWidth(132)
+            lbl.setFixedWidth(112)
             row.addWidget(lbl)
-            row.addWidget(widget)
+            row.addStretch(1)
+            row.addWidget(widget, 0, Qt.AlignmentFlag.AlignRight)
             return container
 
         # --- Section title ---
         title_container = QWidget()
         title_layout = QHBoxLayout(title_container)
-        title_layout.setContentsMargins(8, 6, 8, 4)
+        title_layout.setContentsMargins(8, 4, 8, 2)
         title_lbl = QLabel("Text")
         title_lbl.setObjectName("popupTitle")
         title_layout.addWidget(title_lbl)
@@ -215,12 +216,12 @@ class TextSettingsPopup(_ItemSettingsPopup):
 
         # --- Text color row ---
         tc_btn = QToolButton()
-        tc_btn.setFixedSize(110, 40)
+        tc_btn.setFixedSize(96, 32)
         tc_btn.setStyleSheet(f"background: {_rgba_css(item.text_color)};")
         tc_btn.setToolTip("Pick text color")
         tc_btn.setAccessibleName("Text color")
         def _pick_text_color():
-            color = QColorDialog.getColor(item.text_color, self, "Text Color")
+            color = BasicColorDialog.get_color(item.text_color, self, "Text color")
             if color.isValid():
                 item.set_text_color(color)
                 tc_btn.setStyleSheet(f"background: {_rgba_css(color)};")
@@ -229,14 +230,13 @@ class TextSettingsPopup(_ItemSettingsPopup):
 
         # --- Background color row ---
         bg_btn = QToolButton()
-        bg_btn.setFixedSize(110, 40)
+        bg_btn.setFixedSize(96, 32)
         bg_btn.setStyleSheet(f"background: {_rgba_css(item.bg_color)};")
         bg_btn.setToolTip("Pick background color")
         bg_btn.setAccessibleName("Text background color")
         def _pick_bg_color():
-            color = QColorDialog.getColor(
-                item.bg_color, self, "Background Color",
-                QColorDialog.ColorDialogOption.ShowAlphaChannel
+            color = BasicColorDialog.get_color(
+                item.bg_color, self, "Background color"
             )
             if color.isValid():
                 item.set_bg_color(color)
@@ -248,8 +248,8 @@ class TextSettingsPopup(_ItemSettingsPopup):
         size_spin = FluentSpinBox()
         size_spin.setRange(6, 288)
         size_spin.setValue(item.font_size)
-        size_spin.setSuffix(" pt")
-        size_spin.setFixedSize(110, 40)
+        size_spin.setSuffix(" px")
+        size_spin.setFixedSize(96, 32)
         size_spin.setAccessibleName("Text size")
         def _apply_size(val):
             item.set_font_size(val)
@@ -261,7 +261,7 @@ class TextSettingsPopup(_ItemSettingsPopup):
         if event.type() == QEvent.Type.ActivationChange:
             if not self.isActiveWindow():
                 active_win = QApplication.activeWindow()
-                if active_win and (active_win == self or active_win.parent() == self or isinstance(active_win, QColorDialog)):
+                if active_win and (active_win == self or active_win.parent() == self or isinstance(active_win, BasicColorDialog)):
                     return
                 self.close()
         super().changeEvent(event)
@@ -274,27 +274,28 @@ class ShapeSettingsPopup(_ItemSettingsPopup):
         super().__init__(item, parent)
         self.setWindowFlags(Qt.WindowType.Tool | Qt.WindowType.FramelessWindowHint)
         self.setStyleSheet(_POPUP_STYLESHEET)
-        self.setMinimumWidth(340)
+        self.setMinimumWidth(300)
 
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(12, 12, 12, 12)
-        layout.setSpacing(8)
+        layout.setContentsMargins(8, 8, 8, 8)
+        layout.setSpacing(4)
 
         def _make_row(label_text, widget):
             container = QWidget()
             row = QHBoxLayout(container)
-            row.setContentsMargins(12, 6, 12, 6)
-            row.setSpacing(12)
+            row.setContentsMargins(8, 4, 8, 4)
+            row.setSpacing(8)
             lbl = QLabel(label_text)
-            lbl.setFixedWidth(132)
+            lbl.setFixedWidth(112)
             row.addWidget(lbl)
-            row.addWidget(widget)
+            row.addStretch(1)
+            row.addWidget(widget, 0, Qt.AlignmentFlag.AlignRight)
             return container
 
         # --- Section title ---
         title_container = QWidget()
         title_layout = QHBoxLayout(title_container)
-        title_layout.setContentsMargins(8, 6, 8, 4)
+        title_layout.setContentsMargins(8, 4, 8, 2)
         title_lbl = QLabel("Shape")
         title_lbl.setObjectName("popupTitle")
         title_layout.addWidget(title_lbl)
@@ -313,12 +314,12 @@ class ShapeSettingsPopup(_ItemSettingsPopup):
 
         # --- Stroke color row ---
         sc_btn = QToolButton()
-        sc_btn.setFixedSize(110, 40)
+        sc_btn.setFixedSize(96, 32)
         sc_btn.setStyleSheet(f"background: {_rgba_css(item.pen_color)};")
         sc_btn.setToolTip("Pick stroke color")
         sc_btn.setAccessibleName("Stroke color")
         def _pick_stroke_color():
-            color = QColorDialog.getColor(item.pen_color, self, "Stroke Color")
+            color = BasicColorDialog.get_color(item.pen_color, self, "Stroke color")
             if color.isValid():
                 item.set_pen_color(color)
                 sc_btn.setStyleSheet(f"background: {_rgba_css(color)};")
@@ -330,7 +331,7 @@ class ShapeSettingsPopup(_ItemSettingsPopup):
         size_spin.setRange(1, 80)
         size_spin.setValue(item.pen_width)
         size_spin.setSuffix(" px")
-        size_spin.setFixedSize(110, 40)
+        size_spin.setFixedSize(96, 32)
         size_spin.setAccessibleName("Stroke width")
         def _apply_size(val):
             item.set_pen_width(val)
@@ -340,14 +341,20 @@ class ShapeSettingsPopup(_ItemSettingsPopup):
         # --- Fill rows (if applicable) ---
         if hasattr(item, 'fill_enabled'):
             from PyQt6.QtWidgets import QCheckBox
-            fill_cb = QCheckBox("Enable Fill")
+            fill_cb = QCheckBox()
+            # A label-less checkbox otherwise keeps an invisible text area to
+            # its right, which made its indicator look offset from the other
+            # right-aligned controls in this popup.
+            fill_cb.setFixedSize(32, 32)
+            fill_cb.setStyleSheet("QCheckBox { margin: 0; padding: 0; }")
             fill_cb.setChecked(item.fill_enabled)
+            fill_cb.setAccessibleName("Enable fill")
             
             def _toggle_fill(checked):
                 item.set_fill_enabled(checked)
             fill_cb.toggled.connect(_toggle_fill)
             
-            layout.addWidget(_make_row("Fill", fill_cb))
+            layout.addWidget(_make_row("Enable fill", fill_cb))
 
         self._ui_scaler = WindowScaler(self)
 
@@ -355,7 +362,90 @@ class ShapeSettingsPopup(_ItemSettingsPopup):
         if event.type() == QEvent.Type.ActivationChange:
             if not self.isActiveWindow():
                 active_win = QApplication.activeWindow()
-                if active_win and (active_win == self or active_win.parent() == self or isinstance(active_win, QColorDialog)):
+                if active_win and (active_win == self or active_win.parent() == self or isinstance(active_win, BasicColorDialog)):
+                    return
+                self.close()
+        super().changeEvent(event)
+
+
+class BubbleSettingsPopup(_ItemSettingsPopup):
+    """Compact property editor for a numbered bubble annotation."""
+
+    def __init__(self, item, parent=None):
+        super().__init__(item, parent)
+        self.setWindowFlags(Qt.WindowType.Tool | Qt.WindowType.FramelessWindowHint)
+        self.setStyleSheet(_POPUP_STYLESHEET)
+        self.setMinimumWidth(300)
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(8, 8, 8, 8)
+        layout.setSpacing(4)
+
+        def _make_row(label_text, widget):
+            container = QWidget()
+            row = QHBoxLayout(container)
+            row.setContentsMargins(8, 4, 8, 4)
+            row.setSpacing(8)
+            label = QLabel(label_text)
+            label.setFixedWidth(112)
+            row.addWidget(label)
+            row.addStretch(1)
+            row.addWidget(widget, 0, Qt.AlignmentFlag.AlignRight)
+            return container
+
+        title = QLabel("Bubble")
+        title.setObjectName("popupTitle")
+        title_layout = QHBoxLayout()
+        title_layout.setContentsMargins(8, 4, 8, 2)
+        title_layout.addWidget(title)
+        layout.addLayout(title_layout)
+
+        separator = QFrame()
+        separator.setFrameShape(QFrame.Shape.HLine)
+        separator.setFrameShadow(QFrame.Shadow.Sunken)
+        separator.setStyleSheet(
+            f"background-color: {BORDER_SUBTLE}; max-height: 1px; border: none;"
+        )
+        layout.addWidget(separator)
+
+        def _rgba_css(color):
+            return f"rgba({color.red()}, {color.green()}, {color.blue()}, {color.alpha() / 255.0})"
+
+        color_button = QToolButton()
+        color_button.setFixedSize(96, 32)
+        color_button.setStyleSheet(f"background: {_rgba_css(item.bubble_color)};")
+        color_button.setToolTip("Pick bubble color")
+        color_button.setAccessibleName("Bubble color")
+
+        def _pick_color():
+            color = BasicColorDialog.get_color(item.bubble_color, self, "Bubble color")
+            if color.isValid():
+                item.set_bubble_color(color)
+                color_button.setStyleSheet(f"background: {_rgba_css(color)};")
+
+        color_button.clicked.connect(_pick_color)
+        layout.addWidget(_make_row("Color", color_button))
+
+        size_spin = FluentSpinBox()
+        size_spin.setRange(16, 128)
+        size_spin.setValue(round(item.bubble_size))
+        size_spin.setSuffix(" px")
+        size_spin.setFixedSize(96, 32)
+        size_spin.setAccessibleName("Bubble size")
+        size_spin.valueChanged.connect(item.set_bubble_size)
+        layout.addWidget(_make_row("Size", size_spin))
+
+        self._ui_scaler = WindowScaler(self)
+
+    def changeEvent(self, event):
+        if event.type() == QEvent.Type.ActivationChange:
+            if not self.isActiveWindow():
+                active_win = QApplication.activeWindow()
+                if active_win and (
+                    active_win == self
+                    or active_win.parent() == self
+                    or isinstance(active_win, BasicColorDialog)
+                ):
                     return
                 self.close()
         super().changeEvent(event)
@@ -387,6 +477,7 @@ class AnnotationCanvas(QGraphicsScene):
         self._text_color = QColor("#FF0000")
         self._text_bg_color = QColor(255, 255, 255, 180)
         self._text_size = 14
+        self._bubble_size = 32.0
         self._annotation_scale = 1.0
 
         if pixmap:
@@ -425,11 +516,14 @@ class AnnotationCanvas(QGraphicsScene):
         popup.raise_()
         popup.activateWindow()
 
-    def set_annotation_scale(self, scale: float, pen_width: int, text_size: int):
+    def set_annotation_scale(self, scale: float, pen_width: int, text_size: int,
+                            bubble_size: int | None = None):
         """Scale defaults only; never mutate existing/selected image content."""
         self._annotation_scale = scale
         self._pen_width = pen_width
         self._text_size = text_size
+        if bubble_size is not None:
+            self._bubble_size = max(16.0, min(128.0, bubble_size / scale))
 
     def set_background(self, pixmap: QPixmap):
         """Set the screenshot as the scene background."""
@@ -501,6 +595,13 @@ class AnnotationCanvas(QGraphicsScene):
         for item in self.selectedItems():
             if hasattr(item, 'set_font_size'):
                 item.set_font_size(size)
+
+    def set_bubble_size(self, size: float):
+        """Set the logical default and update selected bubbles."""
+        self._bubble_size = max(16.0, min(128.0, float(size)))
+        for item in self.selectedItems():
+            if hasattr(item, 'set_bubble_size'):
+                item.set_bubble_size(self._bubble_size)
 
     @property
     def undo_stack(self) -> QUndoStack:
@@ -624,9 +725,9 @@ class AnnotationCanvas(QGraphicsScene):
         """Add a numbered bubble at the given position."""
         from editor.items.bubble_item import BubbleItem
         number = self._bubble_counter + 1
-        item = BubbleItem(number, self._pen_color)
+        item = BubbleItem(number, self._pen_color, bubble_size=self._bubble_size)
         item.setScale(self._annotation_scale)
-        radius = 16 * self._annotation_scale
+        radius = (self._bubble_size / 2.0) * self._annotation_scale
         item.setPos(pos.x() - radius, pos.y() - radius)
         cmd = AddBubbleCommand(self, item, number)
         self._undo_stack.push(cmd)
@@ -673,6 +774,7 @@ class AnnotationCanvas(QGraphicsScene):
         from editor.items.ellipse_item import EllipseItem
         from editor.items.line_item import LineItem
         from editor.items.arrow_item import ArrowItem
+        from editor.items.bubble_item import BubbleItem
 
         pos = event.scenePos()
         item = self.itemAt(pos, __import__('PyQt6.QtGui', fromlist=['QTransform']).QTransform())
@@ -680,6 +782,10 @@ class AnnotationCanvas(QGraphicsScene):
         if isinstance(item, TextItem):
             item.setSelected(True)
             self._show_settings_popup(TextSettingsPopup, item, event)
+            return
+        elif isinstance(item, BubbleItem):
+            item.setSelected(True)
+            self._show_settings_popup(BubbleSettingsPopup, item, event)
             return
         elif isinstance(item, (RectItem, EllipseItem, LineItem, ArrowItem)):
             item.setSelected(True)
@@ -691,6 +797,8 @@ class AnnotationCanvas(QGraphicsScene):
 
 
 class CanvasView(QGraphicsView):
+    zoom_changed = pyqtSignal(float)
+
     """
     Custom QGraphicsView for the annotation canvas.
     Supports:
@@ -762,6 +870,7 @@ class CanvasView(QGraphicsView):
         if 0.05 <= new_zoom <= 20.0:
             self._zoom = new_zoom
             self.scale(factor, factor)
+            self.zoom_changed.emit(self._zoom)
 
     def wheelEvent(self, event):
         """Zoom in/out with Ctrl+scroll."""
@@ -820,3 +929,4 @@ class CanvasView(QGraphicsView):
         if self.scene():
             self.fitInView(self.scene().sceneRect(), Qt.AspectRatioMode.KeepAspectRatio)
             self._zoom = self.transform().m11()
+            self.zoom_changed.emit(self._zoom)

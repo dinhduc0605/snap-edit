@@ -1,0 +1,2 @@
+"""Windows text extraction support."""
+

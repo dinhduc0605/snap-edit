@@ -9,17 +9,18 @@ from PyQt6.QtGui import (
     QPen,
 )
 from PyQt6.QtWidgets import (
-    QWidget, QHBoxLayout,
+    QWidget, QHBoxLayout, QVBoxLayout,
     QToolButton, QButtonGroup,
-    QColorDialog, QFrame, QCheckBox, QLabel
+    QFrame, QCheckBox, QLabel,
 )
 
 from theme import (
     ACCENT, ACCENT_SUBTLE, BASE, BORDER,
     BORDER_SUBTLE, CONTROL_RADIUS, HOVER, PRESSED, SURFACE,
-    SURFACE_ALT, TEXT_PRIMARY, TEXT_SECONDARY, TYPE_BODY_PT,
+    SURFACE_ALT, TEXT_PRIMARY, TEXT_SECONDARY, TEXT_MUTED, TYPE_BODY_PT,
+    TYPE_CAPTION_PT, OVERLAY_RADIUS,
 )
-from ui_widgets import FluentSpinBox
+from ui_widgets import BasicColorDialog, FluentSpinBox
 
 
 def _toolbar_icon(name: str, size: int = 24) -> QIcon:
@@ -99,7 +100,6 @@ def _toolbar_icon(name: str, size: int = 24) -> QIcon:
         painter.drawRoundedRect(QRectF(4.0, 3.0, 14.0, 16.0), 1.5, 1.5)
         painter.drawRect(QRectF(7.0, 3.0, 7.5, 5.0))
         painter.drawRoundedRect(QRectF(7.0, 12.0, 8.0, 7.0), 1.0, 1.0)
-
     painter.end()
     return QIcon(pixmap)
 
@@ -149,8 +149,7 @@ class ColorButton(QToolButton):
         self.setIconSize(QSize(size, size))
 
     def _pick_color(self):
-        color = QColorDialog.getColor(self._color, self, "Pick Color",
-                                      QColorDialog.ColorDialogOption.ShowAlphaChannel)
+        color = BasicColorDialog.get_color(self._color, self, "Stroke color")
         if color.isValid():
             self._color = color
             self._update_icon()
@@ -212,7 +211,7 @@ class TextColorButton(QToolButton):
         self.setIconSize(QSize(physical_size, physical_size))
 
     def _pick_color(self):
-        color = QColorDialog.getColor(self._color, self, "Text Color")
+        color = BasicColorDialog.get_color(self._color, self, "Text color")
         if color.isValid():
             self._color = color
             self._update_icon()
@@ -257,6 +256,7 @@ class Toolbar(QWidget):
     text_color_changed       = pyqtSignal(QColor)
     text_bg_color_changed    = pyqtSignal(QColor)
     text_size_changed        = pyqtSignal(int)
+    bubble_size_changed      = pyqtSignal(int)
     undo_requested           = pyqtSignal()
     redo_requested           = pyqtSignal()
     save_file_requested      = pyqtSignal()
@@ -264,16 +264,38 @@ class Toolbar(QWidget):
     gallery_requested        = pyqtSignal()
 
     def __init__(self, initial_color: QColor = QColor("#FF3B30"),
-                 initial_width: int = 3, parent=None):
+                 initial_width: int = 5, parent=None, *,
+                 initial_bubble_size: int = 32,
+                 initial_text_size: int = 14,
+                 initial_text_color: QColor | None = None,
+                 initial_text_bg_color: QColor | None = None,
+                 initial_fill: bool = False):
         super().__init__(parent)
         self._current_tool = ToolType.SELECT
-        self._setup_ui(initial_color, initial_width)
+        self._setup_ui(
+            initial_color, initial_width, initial_bubble_size,
+            initial_text_size, initial_text_color, initial_text_bg_color,
+            initial_fill,
+        )
         self._apply_styles()
 
-    def _setup_ui(self, initial_color: QColor, initial_width: int):
-        layout = QHBoxLayout(self)
+    def _setup_ui(self, initial_color: QColor, initial_width: int,
+                  initial_bubble_size: int, initial_text_size: int,
+                  initial_text_color: QColor | None,
+                  initial_text_bg_color: QColor | None,
+                  initial_fill: bool):
+        layout = QVBoxLayout(self)
         layout.setContentsMargins(12, 8, 12, 8)
-        layout.setSpacing(4)
+        layout.setSpacing(6)
+
+        command_row = QHBoxLayout()
+        command_row.setContentsMargins(0, 0, 0, 0)
+        command_row.setSpacing(4)
+        self._command_row = command_row
+
+        self._tool_label = QLabel("Tools")
+        self._tool_label.setObjectName("groupLabel")
+        command_row.addWidget(self._tool_label)
 
         self._button_group = QButtonGroup(self)
         self._button_group.setExclusive(True)
@@ -292,9 +314,9 @@ class Toolbar(QWidget):
             btn = _make_btn(icon_name, tooltip, checkable=True)
             self._button_group.addButton(btn)
             self._tool_buttons[tool_type] = btn
-            layout.addWidget(btn)
+            command_row.addWidget(btn)
 
-        layout.addWidget(self._create_separator())
+        command_row.addWidget(self._create_separator())
 
         # Text properties.
         self._text_context = QWidget(self)
@@ -305,12 +327,16 @@ class Toolbar(QWidget):
         self._text_context_label.setObjectName("contextTitle")
         text_layout.addWidget(self._text_context_label)
 
-        self._text_color_btn = TextColorButton(QColor("#FF0000"))
+        self._text_color_btn = TextColorButton(
+            initial_text_color or QColor("#FF0000")
+        )
         self._text_color_btn.color_changed.connect(self.text_color_changed.emit)
         self._text_color_btn.setAccessibleName("Text color")
         text_layout.addWidget(self._text_color_btn)
 
-        self._text_bg_btn = ColorButton(QColor(255, 255, 255, 180))
+        self._text_bg_btn = ColorButton(
+            initial_text_bg_color or QColor("#FFFFFF")
+        )
         self._text_bg_btn.setToolTip("Text Background Color")
         self._text_bg_btn.setAccessibleName("Text background color")
         self._text_bg_btn.color_changed.connect(self.text_bg_color_changed.emit)
@@ -318,14 +344,13 @@ class Toolbar(QWidget):
 
         self._text_size_spin = FluentSpinBox()
         self._text_size_spin.setRange(6, 288)
-        self._text_size_spin.setValue(14)
-        self._text_size_spin.setSuffix(" pt")
+        self._text_size_spin.setValue(initial_text_size)
+        self._text_size_spin.setSuffix(" px")
         self._text_size_spin.setFixedWidth(72)
         self._text_size_spin.setToolTip("Text Size")
         self._text_size_spin.setAccessibleName("Text size")
         self._text_size_spin.valueChanged.connect(self.text_size_changed.emit)
         text_layout.addWidget(self._text_size_spin)
-        layout.addWidget(self._text_context)
 
         # Shape and bubble properties.
         self._shape_context = QWidget(self)
@@ -352,36 +377,73 @@ class Toolbar(QWidget):
         self._width_spin.valueChanged.connect(self.stroke_width_changed.emit)
         shape_layout.addWidget(self._width_spin)
 
+        self._bubble_size_spin = FluentSpinBox()
+        self._bubble_size_spin.setRange(16, 128)
+        self._bubble_size_spin.setValue(initial_bubble_size)
+        self._bubble_size_spin.setSuffix(" px")
+        self._bubble_size_spin.setFixedWidth(84)
+        self._bubble_size_spin.setToolTip("Bubble size")
+        self._bubble_size_spin.setAccessibleName("Bubble size")
+        self._bubble_size_spin.valueChanged.connect(self.bubble_size_changed.emit)
+        shape_layout.addWidget(self._bubble_size_spin)
+
         self._fill_cb = QCheckBox("Fill")
+        self._fill_cb.setChecked(initial_fill)
         self._fill_cb.setAccessibleName("Fill shape")
         self._fill_cb.toggled.connect(self.fill_changed.emit)
         shape_layout.addWidget(self._fill_cb)
-        layout.addWidget(self._shape_context)
 
-        layout.addStretch(1)
+        command_row.addStretch(1)
 
-        layout.addWidget(self._create_separator())
+        command_row.addWidget(self._create_separator())
 
         # Global commands.
         self._undo_btn = _make_btn("undo", "Undo (Ctrl+Z)")
+        self._undo_btn.setObjectName("commandButton")
         self._undo_btn.clicked.connect(self.undo_requested.emit)
-        layout.addWidget(self._undo_btn)
+        command_row.addWidget(self._undo_btn)
 
         self._redo_btn = _make_btn("redo", "Redo (Ctrl+Y)")
+        self._redo_btn.setObjectName("commandButton")
         self._redo_btn.clicked.connect(self.redo_requested.emit)
-        layout.addWidget(self._redo_btn)
+        command_row.addWidget(self._redo_btn)
 
         self._clipboard_btn = _make_btn("copy", "Copy to clipboard (Ctrl+C)")
+        self._clipboard_btn.setObjectName("commandButton")
+        self._clipboard_btn.setText("Copy")
         self._clipboard_btn.clicked.connect(self.copy_clipboard_requested.emit)
-        layout.addWidget(self._clipboard_btn)
+        command_row.addWidget(self._clipboard_btn)
 
         self._gallery_btn = _make_btn("gallery", "Gallery (Ctrl+G)")
+        self._gallery_btn.setObjectName("commandButton")
+        self._gallery_btn.setText("Gallery")
         self._gallery_btn.clicked.connect(self.gallery_requested.emit)
-        layout.addWidget(self._gallery_btn)
+        command_row.addWidget(self._gallery_btn)
 
         self._save_btn = _make_btn("save", "Save file (Ctrl+S)")
+        self._save_btn.setObjectName("commandButton")
+        self._save_btn.setText("Save")
         self._save_btn.clicked.connect(self.save_file_requested.emit)
-        layout.addWidget(self._save_btn)
+        command_row.addWidget(self._save_btn)
+
+        layout.addLayout(command_row)
+
+        self._context_bar = QFrame(self)
+        self._context_bar.setObjectName("contextBar")
+        context_layout = QHBoxLayout(self._context_bar)
+        context_layout.setContentsMargins(12, 4, 8, 4)
+        context_layout.setSpacing(8)
+        self._context_title = QLabel("Properties")
+        self._context_title.setObjectName("contextTitle")
+        context_layout.addWidget(self._context_title)
+        context_layout.addWidget(self._create_separator())
+        self._context_hint = QLabel("Select a tool to see its properties")
+        self._context_hint.setObjectName("contextHint")
+        context_layout.addWidget(self._context_hint)
+        context_layout.addWidget(self._text_context)
+        context_layout.addWidget(self._shape_context)
+        context_layout.addStretch(1)
+        layout.addWidget(self._context_bar)
 
         self._tool_buttons[ToolType.SELECT].setChecked(True)
         self._button_group.buttonClicked.connect(self._on_tool_clicked)
@@ -402,6 +464,12 @@ class Toolbar(QWidget):
         )
         self._text_context.setVisible(is_text)
         self._shape_context.setVisible(is_shape)
+        self._context_hint.setVisible(not is_text and not is_shape)
+        self._context_title.setText(
+            "Text properties" if is_text else
+            "Shape properties" if is_shape else
+            "Properties"
+        )
 
         if not is_shape:
             return
@@ -412,6 +480,7 @@ class Toolbar(QWidget):
             "Bubble" if is_bubble else "Shape" if supports_fill else "Stroke"
         )
         self._width_spin.setVisible(not is_bubble)
+        self._bubble_size_spin.setVisible(is_bubble)
         self._fill_cb.setVisible(supports_fill)
 
     def resizeEvent(self, event):
@@ -420,13 +489,21 @@ class Toolbar(QWidget):
         super().resizeEvent(event)
 
     def _update_compact_mode(self):
-        compact = self.width() < 1050 * (self.property("uiScale") or 1.0)
-        self._undo_btn.setVisible(not compact)
-        self._redo_btn.setVisible(not compact)
+        scale = self.property("uiScale") or 1.0
+        compact = self.width() < 1008 * scale
+        self._tool_label.setVisible(not compact)
         self._text_context_label.setVisible(not compact)
         self._shape_context_label.setVisible(not compact)
+        style = (
+            Qt.ToolButtonStyle.ToolButtonIconOnly
+            if compact else Qt.ToolButtonStyle.ToolButtonTextBesideIcon
+        )
+        for button in (self._clipboard_btn, self._gallery_btn, self._save_btn):
+            button.setToolButtonStyle(style)
+        self.update_scale(scale)
 
-    def apply_ui_scale(self, scale: float, stroke_width: int, text_size: int):
+    def apply_ui_scale(self, scale: float, stroke_width: int, text_size: int,
+                       bubble_size: int | None = None):
         """Refresh raster assets and defaults after the layout is DPI-scaled."""
         for btn in self.findChildren(QToolButton):
             name = btn.property("iconName")
@@ -435,10 +512,18 @@ class Toolbar(QWidget):
         for btn in (self._color_button, self._text_color_btn, self._text_bg_btn):
             btn._update_icon()
         # Scaling must not trigger edits of the currently selected annotation.
-        with QSignalBlocker(self._width_spin), QSignalBlocker(self._text_size_spin):
+        with QSignalBlocker(self._width_spin), QSignalBlocker(self._text_size_spin), \
+                QSignalBlocker(self._bubble_size_spin):
             self._width_spin.setValue(stroke_width)
             self._text_size_spin.setValue(text_size)
+            if bubble_size is not None:
+                self._bubble_size_spin.setValue(bubble_size)
         self._update_compact_mode()
+
+    def set_command_state(self, can_undo: bool, can_redo: bool):
+        """Keep command affordances in sync with the canvas history."""
+        self._undo_btn.setEnabled(can_undo)
+        self._redo_btn.setEnabled(can_redo)
 
     def _on_tool_clicked(self, button: QToolButton):
         for tool_type, btn in self._tool_buttons.items():
@@ -456,11 +541,22 @@ class Toolbar(QWidget):
         btn_size = int(44 * factor)
         icon_size = max(20, int(24 * factor))
         icon_buttons = list(self._tool_buttons.values()) + [
-            self._undo_btn, self._redo_btn, self._clipboard_btn,
-            self._gallery_btn, self._save_btn,
+            self._undo_btn, self._redo_btn,
         ]
         for btn in icon_buttons:
             btn.setFixedSize(btn_size, btn_size)
+            btn.setIcon(_toolbar_icon(btn.property("iconName"), icon_size))
+            btn.setIconSize(QSize(icon_size, icon_size))
+
+        for btn, width in (
+            (self._clipboard_btn, 88),
+            (self._gallery_btn, 96),
+            (self._save_btn, 80),
+        ):
+            if btn.toolButtonStyle() == Qt.ToolButtonStyle.ToolButtonTextBesideIcon:
+                btn.setFixedSize(round(width * factor), btn_size)
+            else:
+                btn.setFixedSize(btn_size, btn_size)
             btn.setIcon(_toolbar_icon(btn.property("iconName"), icon_size))
             btn.setIconSize(QSize(icon_size, icon_size))
 
@@ -471,12 +567,30 @@ class Toolbar(QWidget):
 
         self._width_spin.setFixedWidth(int(84 * factor))
         self._text_size_spin.setFixedWidth(int(84 * factor))
-        self.setMinimumHeight(int(64 * factor))
+        self._bubble_size_spin.setFixedWidth(int(84 * factor))
+        self.setMinimumHeight(int(112 * factor))
 
         self.setStyleSheet(f"""
             Toolbar {{
                 background: {BASE};
                 border-bottom: 1px solid {BORDER_SUBTLE};
+            }}
+            QFrame#contextBar {{
+                background: {SURFACE};
+                border: 1px solid {BORDER_SUBTLE};
+                border-radius: {OVERLAY_RADIUS}px;
+            }}
+            QLabel#groupLabel {{
+                color: {TEXT_MUTED};
+                font-family: 'Segoe UI Variable', 'Segoe UI';
+                font-size: {TYPE_CAPTION_PT}pt;
+                font-weight: 600;
+                padding: 0 4px;
+            }}
+            QLabel#contextHint {{
+                color: {TEXT_MUTED};
+                font-family: 'Segoe UI Variable', 'Segoe UI';
+                font-size: {TYPE_CAPTION_PT}pt;
             }}
             QToolButton {{
                 background: transparent;
@@ -484,6 +598,11 @@ class Toolbar(QWidget):
                 border-radius: {CONTROL_RADIUS}px;
                 color: {TEXT_PRIMARY};
                 padding: {int(7 * factor)}px;
+            }}
+            QToolButton#commandButton {{
+                font-family: 'Segoe UI Variable', 'Segoe UI';
+                font-size: {TYPE_BODY_PT}pt;
+                font-weight: 600;
             }}
             QToolButton:hover {{
                 background: {HOVER};

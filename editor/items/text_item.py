@@ -41,7 +41,7 @@ class TextItem(QGraphicsTextItem):
     text_color : QColor
         Initial text colour (default red).
     font_size : int
-        Initial font point size (default 14).
+        Initial font size in image pixels (default 14).
     bg_color : QColor
         Background colour (default semi-transparent white).
     parent : QGraphicsItem | None
@@ -69,8 +69,8 @@ class TextItem(QGraphicsTextItem):
         # Font
         font = QFont(_DEFAULT_FONT_FAMILY, self._font_size)
         # Scene coordinates are image pixels, independent of the export
-        # device's DPI. Resolve points at 96 DPI; the editor scales defaults.
-        font.setPixelSize(round(self._font_size * 96 / 72))
+        # device's DPI; the editor scales defaults for the current monitor.
+        font.setPixelSize(self._font_size)
         font.setBold(True)
         self.setFont(font)
         self.setDefaultTextColor(self._text_color)
@@ -103,10 +103,10 @@ class TextItem(QGraphicsTextItem):
     # ------------------------------------------------------------------
 
     def set_font_size(self, size: int) -> None:
-        """Change the font point size."""
+        """Change the font size in image pixels."""
         self._font_size = max(6, size)
         font = self.font()
-        font.setPixelSize(round(self._font_size * 96 / 72))
+        font.setPixelSize(self._font_size)
         self.setFont(font)
         self.update()
 

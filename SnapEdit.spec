@@ -3,6 +3,7 @@
 import os
 from pathlib import Path
 import sys
+from PyInstaller.utils.hooks import collect_submodules
 
 sys.path.insert(0, str(Path(SPECPATH)))
 from scripts.build_windows import clean_environment, verify_dll_origins
@@ -19,10 +20,10 @@ for key in ("PATH", "PYTHONPATH", "PYTHONHOME", "QT_PLUGIN_PATH",
 
 a = Analysis(
     ['bootstrap.py'],
-    pathex=[],
+    pathex=[str(Path(SPECPATH) / 'vendor')],
     binaries=[],
     datas=[('assets/icon.ico', 'assets')],
-    hiddenimports=[],
+    hiddenimports=collect_submodules('winrt'),
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],

@@ -6,7 +6,7 @@ semi-transparent fill.  Supports 8 resize handles via ResizableItem.
 """
 
 from PyQt6.QtCore import Qt, QRectF, QPointF
-from PyQt6.QtGui import QPen, QBrush, QColor, QPainter
+from PyQt6.QtGui import QPen, QBrush, QColor, QPainter, QPainterPath
 from PyQt6.QtWidgets import (
     QGraphicsRectItem,
     QGraphicsItem,
@@ -15,7 +15,7 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
-from .base_item import ResizableItem
+from .base_item import HandlePosition, ResizableItem
 
 
 class RectItem(ResizableItem, QGraphicsRectItem):
@@ -45,6 +45,7 @@ class RectItem(ResizableItem, QGraphicsRectItem):
         self._init_resizable(pen_color, pen_width)
 
         self._fill_enabled: bool = False
+        self.setAcceptHoverEvents(True)
 
         # Apply initial pen
         self._apply_pen()
@@ -99,6 +100,13 @@ class RectItem(ResizableItem, QGraphicsRectItem):
         margin = max(self._pen_width, 8) / 2.0 + 2.0
         return r.adjusted(-margin, -margin, margin, margin)
 
+    def shape(self) -> QPainterPath:
+        """Include resize handles in hit-testing for hover and drag."""
+        path = super().shape()
+        for handle_rect in self.get_handle_rects(self.rect()):
+            path.addRect(handle_rect.adjusted(-5, -5, 5, 5))
+        return path
+
     def paint(
         self,
         painter: QPainter,
@@ -127,6 +135,8 @@ class RectItem(ResizableItem, QGraphicsRectItem):
         # --- Resize handles ---
         if self.isSelected():
             self.draw_handles(painter, self.rect())
+        elif self._hover_handle != HandlePosition.NONE:
+            self.draw_handles(painter, self.rect(), self._hover_handle)
 
     # ------------------------------------------------------------------
     # Mouse events – delegate to ResizableItem helpers
@@ -149,3 +159,11 @@ class RectItem(ResizableItem, QGraphicsRectItem):
         if self.resizable_mouse_release(event):
             return
         super().mouseReleaseEvent(event)
+
+    def hoverMoveEvent(self, event) -> None:
+        self.resizable_hover_move(event, self.rect())
+        super().hoverMoveEvent(event)
+
+    def hoverLeaveEvent(self, event) -> None:
+        self.resizable_hover_leave(event)
+        super().hoverLeaveEvent(event)

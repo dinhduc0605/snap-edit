@@ -73,7 +73,7 @@ class DpiCaptureTests(unittest.TestCase):
             self.assertEqual(button.iconSize(), QSize(size, size))
             self.assertEqual(button.icon().pixmap(QSize(size, size)).size(), QSize(size, size))
             self.assertEqual(editor._toolbar.layout().contentsMargins().left(), round(12 * scale))
-            self.assertEqual(editor._canvas._pen_width, round(3 * scale))
+            self.assertEqual(editor._canvas._pen_width, round(5 * scale))
             self.assertEqual(editor._canvas._text_size, round(14 * scale))
 
     def test_monitor_transition_does_not_edit_selected_annotations(self):

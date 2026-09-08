@@ -11,14 +11,19 @@ DEFAULT_CONFIG = {
     "hotkeys": {
         "fullscreen": "alt+shift+1",
         "region": "alt+shift+2",
-        "timed_region": "alt+shift+3"
+        "timed_region": "alt+shift+3",
+        "ocr": "alt+shift+4",
     },
     "save_directory": str(Path.home() / "Pictures" / "SnapEdit"),
     "default_format": "png",
     "auto_copy_clipboard": False,
     "start_with_windows": False,
     "stroke_color": "#FF3B30",
-    "stroke_width": 3,
+    "stroke_width": 5,
+    "text_size": 14,
+    "bubble_size": 32,
+    "text_color": "#FF0000",
+    "text_bg_color": "#FFFFFF",
     "bubble_color": "#FF3B30",
     "fill_shapes": False,
     "fill_opacity": 0.2
@@ -40,8 +45,18 @@ class Config:
             try:
                 with open(self._config_path, "r", encoding="utf-8") as f:
                     self._data = json.load(f)
+                legacy_drawing_defaults = (
+                    "text_size" not in self._data
+                    and "bubble_size" not in self._data
+                )
                 # Merge missing keys from defaults
                 self._merge_defaults(self._data, DEFAULT_CONFIG)
+                # The old editor defaulted to a 3 px stroke. Treat that value
+                # as the legacy default only when no new editor properties
+                # have ever been saved; intentional user changes are kept.
+                if legacy_drawing_defaults and self._data.get("stroke_width") == 3:
+                    self._data["stroke_width"] = DEFAULT_CONFIG["stroke_width"]
+                    self.save()
             except (json.JSONDecodeError, IOError):
                 self._data = DEFAULT_CONFIG.copy()
                 self.save()
@@ -116,6 +131,14 @@ class Config:
     @property
     def bubble_color(self) -> str:
         return self._data.get("bubble_color", DEFAULT_CONFIG["bubble_color"])
+
+    @property
+    def text_size(self) -> int:
+        return self._data.get("text_size", DEFAULT_CONFIG["text_size"])
+
+    @property
+    def bubble_size(self) -> int:
+        return self._data.get("bubble_size", DEFAULT_CONFIG["bubble_size"])
 
     def reset_to_defaults(self):
         """Reset all settings to defaults."""

@@ -65,12 +65,14 @@ class ArrowItem(QGraphicsPathItem):
 
         # Drag state: 0 = start handle, 1 = end handle, -1 = none
         self._dragging_handle: int = -1
+        self._hover_handle: int = -1
 
         self.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIsMovable, True)
         self.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIsSelectable, True)
         self.setFlag(
             QGraphicsItem.GraphicsItemFlag.ItemSendsGeometryChanges, True
         )
+        self.setAcceptHoverEvents(True)
 
         self._update_path()
 
@@ -184,7 +186,15 @@ class ArrowItem(QGraphicsPathItem):
         from PyQt6.QtGui import QPainterPathStroker
         stroker = QPainterPathStroker()
         stroker.setWidth(max(self._pen_width + 8, 14))
-        return stroker.createStroke(stroker_path)
+        result = stroker.createStroke(stroker_path)
+        for center in (self._start_point, self._end_point):
+            result.addEllipse(QRectF(
+                center.x() - _HANDLE_RADIUS - 5,
+                center.y() - _HANDLE_RADIUS - 5,
+                (_HANDLE_RADIUS + 5) * 2,
+                (_HANDLE_RADIUS + 5) * 2,
+            ))
+        return result
 
     def paint(
         self,
@@ -226,6 +236,10 @@ class ArrowItem(QGraphicsPathItem):
         if self.isSelected():
             self._draw_endpoint_handle(painter, self._start_point)
             self._draw_endpoint_handle(painter, self._end_point)
+        elif self._hover_handle == 0:
+            self._draw_endpoint_handle(painter, self._start_point)
+        elif self._hover_handle == 1:
+            self._draw_endpoint_handle(painter, self._end_point)
 
     @staticmethod
     def _draw_endpoint_handle(painter: QPainter, center: QPointF) -> None:
@@ -256,7 +270,7 @@ class ArrowItem(QGraphicsPathItem):
     def _point_in_handle(pos: QPointF, center: QPointF) -> bool:
         dx = pos.x() - center.x()
         dy = pos.y() - center.y()
-        return (dx * dx + dy * dy) <= (_HANDLE_RADIUS + 2) ** 2
+        return (dx * dx + dy * dy) <= (_HANDLE_RADIUS + 5) ** 2
 
     # ------------------------------------------------------------------
     # Mouse events
@@ -292,3 +306,20 @@ class ArrowItem(QGraphicsPathItem):
             event.accept()
             return
         super().mouseReleaseEvent(event)
+
+    def hoverMoveEvent(self, event) -> None:
+        handle = self._handle_at(event.pos())
+        if handle != self._hover_handle:
+            self._hover_handle = handle
+            if handle == -1:
+                self.unsetCursor()
+            else:
+                self.setCursor(Qt.CursorShape.SizeAllCursor)
+            self.update()
+        super().hoverMoveEvent(event)
+
+    def hoverLeaveEvent(self, event) -> None:
+        self._hover_handle = -1
+        self.unsetCursor()
+        self.update()
+        super().hoverLeaveEvent(event)

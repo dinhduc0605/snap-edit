@@ -36,6 +36,7 @@ HANDLE_HALF: float = HANDLE_SIZE / 2.0
 HANDLE_FILL_COLOR = QColor(255, 255, 255)
 HANDLE_BORDER_COLOR = QColor(30, 120, 255)
 MIN_ITEM_SIZE: float = 10.0
+HANDLE_HIT_MARGIN: float = 5.0
 
 
 class ResizableItem:
@@ -60,6 +61,7 @@ class ResizableItem:
         self._active_handle: HandlePosition = HandlePosition.NONE
         self._drag_origin: Optional[QPointF] = None
         self._drag_rect_origin: Optional[QRectF] = None
+        self._hover_handle: HandlePosition = HandlePosition.NONE
 
         # Common flags for every annotation item
         self.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIsMovable, True)
@@ -123,10 +125,12 @@ class ResizableItem:
         ]
 
     @staticmethod
-    def get_handle_at_pos(pos: QPointF, rect: QRectF) -> HandlePosition:
+    def get_handle_at_pos(
+        pos: QPointF, rect: QRectF, hit_margin: float = 0.0,
+    ) -> HandlePosition:
         """Return the handle under *pos*, or ``HandlePosition.NONE``."""
         for idx, hr in enumerate(ResizableItem.get_handle_rects(rect)):
-            if hr.contains(pos):
+            if hr.adjusted(-hit_margin, -hit_margin, hit_margin, hit_margin).contains(pos):
                 return HandlePosition(idx)
         return HandlePosition.NONE
 
@@ -150,12 +154,17 @@ class ResizableItem:
     # ------------------------------------------------------------------
 
     @staticmethod
-    def draw_handles(painter: QPainter, rect: QRectF) -> None:
-        """Draw all 8 resize handles around *rect*."""
+    def draw_handles(
+        painter: QPainter, rect: QRectF,
+        only: HandlePosition = HandlePosition.NONE,
+    ) -> None:
+        """Draw all handles, or only the hovered handle, around *rect*."""
         painter.save()
         painter.setPen(QPen(HANDLE_BORDER_COLOR, 1.0, Qt.PenStyle.SolidLine))
         painter.setBrush(QBrush(HANDLE_FILL_COLOR))
-        for hr in ResizableItem.get_handle_rects(rect):
+        for idx, hr in enumerate(ResizableItem.get_handle_rects(rect)):
+            if only != HandlePosition.NONE and idx != int(only):
+                continue
             painter.drawRect(hr)
         painter.restore()
 
@@ -228,7 +237,7 @@ class ResizableItem:
         if event.button() != Qt.MouseButton.LeftButton:
             return False
 
-        handle = self.get_handle_at_pos(event.pos(), rect)
+        handle = self.get_handle_at_pos(event.pos(), rect, HANDLE_HIT_MARGIN)
         if handle != HandlePosition.NONE:
             self._active_handle = handle
             self._drag_origin = event.pos()
@@ -237,6 +246,28 @@ class ResizableItem:
             event.accept()
             return True
         return False
+
+    def resizable_hover_move(
+        self, event: QGraphicsSceneMouseEvent, rect: QRectF,
+    ) -> None:
+        """Show a resize handle and cursor as the pointer approaches it."""
+        handle = self.get_handle_at_pos(event.pos(), rect, HANDLE_HIT_MARGIN)
+        if handle == self._hover_handle:
+            return
+        self._hover_handle = handle
+        if handle == HandlePosition.NONE:
+            self.unsetCursor()
+        else:
+            self.setCursor(self._cursor_for_handle(handle))
+        self.update()
+
+    def resizable_hover_leave(self, event: QGraphicsSceneMouseEvent) -> None:
+        """Clear hover-only resize affordances when leaving the item."""
+        if self._hover_handle == HandlePosition.NONE:
+            return
+        self._hover_handle = HandlePosition.NONE
+        self.unsetCursor()
+        self.update()
 
     def resizable_mouse_move(
         self, event: QGraphicsSceneMouseEvent,
