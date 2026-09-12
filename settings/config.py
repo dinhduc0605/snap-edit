@@ -2,6 +2,7 @@
 Configuration management for SnapEdit.
 Reads and writes settings from/to a JSON config file.
 """
+import copy
 import json
 import os
 from pathlib import Path
@@ -13,6 +14,9 @@ DEFAULT_CONFIG = {
         "region": "alt+shift+2",
         "timed_region": "alt+shift+3",
         "ocr": "alt+shift+4",
+    },
+    "ocr": {
+        "language": "auto",
     },
     "save_directory": str(Path.home() / "Pictures" / "SnapEdit"),
     "default_format": "png",
@@ -58,10 +62,10 @@ class Config:
                     self._data["stroke_width"] = DEFAULT_CONFIG["stroke_width"]
                     self.save()
             except (json.JSONDecodeError, IOError):
-                self._data = DEFAULT_CONFIG.copy()
+                self._data = copy.deepcopy(DEFAULT_CONFIG)
                 self.save()
         else:
-            self._data = DEFAULT_CONFIG.copy()
+            self._data = copy.deepcopy(DEFAULT_CONFIG)
             self.save()
 
         # Ensure save directory exists
@@ -72,7 +76,10 @@ class Config:
         """Recursively merge missing default keys into current config."""
         for key, value in defaults.items():
             if key not in current:
-                current[key] = value
+                # Nested defaults must not share references with the module
+                # constant; otherwise changing a new setting could mutate the
+                # defaults used by future Config instances.
+                current[key] = copy.deepcopy(value)
             elif isinstance(value, dict) and isinstance(current.get(key), dict):
                 self._merge_defaults(current[key], value)
 
@@ -142,5 +149,5 @@ class Config:
 
     def reset_to_defaults(self):
         """Reset all settings to defaults."""
-        self._data = DEFAULT_CONFIG.copy()
+        self._data = copy.deepcopy(DEFAULT_CONFIG)
         self.save()

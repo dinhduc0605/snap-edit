@@ -1,17 +1,28 @@
-"""Asynchronous Windows OCR worker.
+"""Asynchronous Windows OCR worker with conservative Japanese preprocessing.
 
-The Windows.Media.Ocr engine uses the recognizer languages installed for the
-current Windows user. The GUI thread only prepares the pixel buffer and
-receives the final string, so selecting a region stays responsive.
+Windows.Media.Ocr is kept as the only recognition engine, so this feature does
+not add a large model or a resident background process. The worker owns the
+pixel copy and all image/OCR work, leaving the GUI thread responsive while a
+region is recognized.
 """
 from __future__ import annotations
 
 import asyncio
+from collections import Counter
+from dataclasses import dataclass
+from difflib import SequenceMatcher
 from pathlib import Path
 import sys
+from typing import Iterable
 
 from PyQt6.QtCore import QThread, pyqtSignal
 from PyQt6.QtGui import QImage, QPixmap
+
+from ocr.preprocess import OcrImageVariant, OcrPreprocessor
+
+
+_LANGUAGE_AUTO = "auto"
+_SUPPORTED_LANGUAGE_PREFERENCES = {_LANGUAGE_AUTO, "ja", "en"}
 
 
 def _add_vendor_path() -> None:
@@ -21,18 +32,59 @@ def _add_vendor_path() -> None:
             sys.path.insert(0, str(vendor))
 
 
+@dataclass(frozen=True)
+class OcrCandidate:
+    """Text returned for one language/image-variant attempt."""
+
+    language_tag: str
+    variant_name: str
+    text: str
+
+
 class OcrWorker(QThread):
     text_ready = pyqtSignal(str)
     failed = pyqtSignal(str)
 
-    def __init__(self, pixmap: QPixmap, parent=None):
+    def __init__(
+        self,
+        pixmap: QPixmap,
+        parent=None,
+        *,
+        language: str = _LANGUAGE_AUTO,
+        preprocess: bool = True,
+    ):
         super().__init__(parent)
-        # Windows OCR's native 32-bit format is BGRA8; Qt's ARGB32 is BGRA
-        # byte order on Windows and avoids an extra channel conversion.
-        image = pixmap.toImage().convertToFormat(QImage.Format.Format_ARGB32)
+        # Use explicit RGBA bytes while the pixmap is still on the GUI thread.
+        # Pillow converts those bytes into BGRA only for the WinRT bitmap.
+        image = pixmap.toImage().convertToFormat(QImage.Format.Format_RGBA8888)
         self._width = image.width()
         self._height = image.height()
-        self._pixels = image.constBits().asstring(image.sizeInBytes())
+        self._rgba_pixels = self._qimage_rgba_bytes(image)
+        self._language_preference = self.normalize_language_preference(language)
+        self._preprocess = preprocess
+
+    @staticmethod
+    def _qimage_rgba_bytes(image: QImage) -> bytes:
+        """Copy rows without retaining a GUI-owned QImage buffer."""
+        raw = image.constBits().asstring(image.sizeInBytes())
+        row_size = image.width() * 4
+        stride = image.bytesPerLine()
+        if stride == row_size:
+            return raw
+        return b"".join(
+            raw[row * stride: row * stride + row_size]
+            for row in range(image.height())
+        )
+
+    @staticmethod
+    def normalize_language_preference(value: object) -> str:
+        """Coerce old/invalid config data to a safe recognition preference."""
+        value = str(value or _LANGUAGE_AUTO).strip().casefold()
+        if value.startswith("ja"):
+            return "ja"
+        if value.startswith("en"):
+            return "en"
+        return value if value in _SUPPORTED_LANGUAGE_PREFERENCES else _LANGUAGE_AUTO
 
     def run(self) -> None:
         try:
@@ -48,71 +100,242 @@ class OcrWorker(QThread):
         from winrt.windows.media.ocr import OcrEngine
         from winrt.windows.storage.streams import DataWriter
 
-        languages = list(OcrEngine.available_recognizer_languages)
-        if not languages:
+        available_tags = [
+            language.language_tag
+            for language in OcrEngine.available_recognizer_languages
+        ]
+        if not available_tags:
             raise RuntimeError(
                 "Windows không có gói ngôn ngữ OCR phù hợp. "
                 "Hãy cài Language pack có tính năng OCR trong Windows Settings."
             )
 
-        results = []
-        for language in languages:
-            engine = OcrEngine.try_create_from_language(
-                Language(language.language_tag)
-            )
+        language_tags = self._select_language_tags(
+            available_tags, self._language_preference
+        )
+        if not language_tags:
+            raise RuntimeError(self._missing_language_message())
+
+        max_dimension = int(
+            getattr(OcrEngine, "max_image_dimension", 10_000) or 10_000
+        )
+        preprocessor = OcrPreprocessor(max_dimension)
+        candidates: list[OcrCandidate] = []
+
+        for language_tag in language_tags:
+            engine = OcrEngine.try_create_from_language(Language(language_tag))
             if engine is None:
                 continue
-            bitmap = SoftwareBitmap(
-                BitmapPixelFormat.BGRA8, self._width, self._height
-            )
-            writer = DataWriter()
-            writer.write_bytes(self._pixels)
-            bitmap.copy_from_buffer(writer.detach_buffer())
-            result = await engine.recognize_async(bitmap)
-            text = (result.text or "").strip()
-            if text:
-                results.append((language.language_tag, text))
+            try:
+                # Extra candidates are opt-in through the Japanese setting.
+                # Auto remains as quick as the prior one-pass implementation.
+                variants = preprocessor.prepare(
+                    self._width,
+                    self._height,
+                    self._rgba_pixels,
+                    japanese_variants=(
+                        self._preprocess
+                        and self._language_preference == "ja"
+                        and language_tag.casefold().startswith("ja")
+                    ),
+                )
+                for variant in variants:
+                    text = await self._recognize_variant(
+                        engine,
+                        variant,
+                        BitmapPixelFormat,
+                        SoftwareBitmap,
+                        DataWriter,
+                    )
+                    if text:
+                        candidates.append(
+                            OcrCandidate(language_tag, variant.name, text)
+                        )
+            finally:
+                self._close_winrt_object(engine)
 
-        if not results:
+        if not candidates:
             raise RuntimeError(
-                "Không thể khởi tạo Windows OCR. "
-                "Hãy kiểm tra lại các Language pack có tính năng OCR."
+                "Không thể nhận diện chữ trong vùng đã chọn. "
+                "Hãy thử chọn vùng rõ nét hơn."
             )
-        return self._select_result(results)
+        return self._select_result(candidates, self._language_preference)
 
     @staticmethod
-    def _select_result(results) -> str:
-        """Prefer a result containing non-Latin script characters.
+    async def _recognize_variant(
+        engine,
+        variant: OcrImageVariant,
+        bitmap_pixel_format,
+        software_bitmap_type,
+        data_writer_type,
+    ) -> str:
+        """Recognize one candidate and promptly release its native buffers."""
+        bitmap = None
+        writer = None
+        result = None
+        try:
+            bitmap = software_bitmap_type(
+                bitmap_pixel_format.BGRA8, variant.width, variant.height
+            )
+            writer = data_writer_type()
+            writer.write_bytes(variant.bgra_pixels)
+            bitmap.copy_from_buffer(writer.detach_buffer())
+            result = await engine.recognize_async(bitmap)
+            return (result.text or "").strip()
+        finally:
+            OcrWorker._close_winrt_object(result)
+            OcrWorker._close_winrt_object(writer)
+            OcrWorker._close_winrt_object(bitmap)
 
-        The profile-language engine can silently choose the first installed
-        language. Running each installed recognizer lets Japanese, Chinese,
-        and Korean text work even when English is the default Windows language.
-        For plain Latin text, preserve the first result (normally en-US).
+    @staticmethod
+    def _close_winrt_object(value) -> None:
+        close = getattr(value, "close", None)
+        if callable(close):
+            try:
+                close()
+            except Exception:
+                # The WinRT wrappers vary slightly by package version; cleanup
+                # must never turn a successful OCR result into a failure.
+                pass
+
+    @classmethod
+    def _select_language_tags(
+        cls, available_tags: Iterable[str], preference: str
+    ) -> list[str]:
+        """Return installed engine tags matching the configured preference."""
+        tags = list(dict.fromkeys(str(tag) for tag in available_tags))
+        preference = cls.normalize_language_preference(preference)
+        if preference == _LANGUAGE_AUTO:
+            return tags
+        return [tag for tag in tags if tag.casefold().startswith(preference)]
+
+    def _missing_language_message(self) -> str:
+        language_name = {"ja": "tiếng Nhật", "en": "tiếng Anh"}.get(
+            self._language_preference, "đã chọn"
+        )
+        return (
+            f"Windows chưa cài gói OCR {language_name}. "
+            "Hãy vào Settings > Time & language > Language & region, "
+            "cài language pack và bật tính năng OCR."
+        )
+
+    @classmethod
+    def _select_result(
+        cls,
+        results: Iterable[OcrCandidate | tuple[str, str]],
+        language_preference: str = _LANGUAGE_AUTO,
+    ) -> str:
+        """Choose the stable result without assuming an unavailable confidence API.
+
+        Legacy Windows OCR exposes no per-word confidence. For Japanese mode
+        we retain the source result and choose the text supported by the most
+        similar image variants; exact agreement wins immediately.
         """
-        scripted = [
-            item for item in results
-            if any(
-                "\u3040" <= char <= "\u30ff"  # Hiragana/Katakana
-                or "\u3400" <= char <= "\u9fff"  # CJK ideographs
-                or "\uac00" <= char <= "\ud7af"  # Hangul
-                for char in item[1]
+        candidates = cls._normalize_candidates(results)
+        if not candidates:
+            return ""
+
+        preference = cls.normalize_language_preference(language_preference)
+        scoped = candidates
+        if preference == _LANGUAGE_AUTO:
+            scripted = [
+                candidate
+                for candidate in candidates
+                if cls._scripted_character_count(candidate.text)
+            ]
+            if scripted:
+                chosen_tag = max(
+                    scripted,
+                    key=lambda candidate: cls._scripted_character_count(candidate.text),
+                ).language_tag.casefold()
+                scoped = [
+                    candidate
+                    for candidate in candidates
+                    if candidate.language_tag.casefold() == chosen_tag
+                ]
+            else:
+                first_tag = candidates[0].language_tag.casefold()
+                scoped = [
+                    candidate
+                    for candidate in candidates
+                    if candidate.language_tag.casefold() == first_tag
+                ]
+
+        return cls._choose_variant_result(scoped).text
+
+    @classmethod
+    def _normalize_candidates(
+        cls, results: Iterable[OcrCandidate | tuple[str, str]]
+    ) -> list[OcrCandidate]:
+        candidates: list[OcrCandidate] = []
+        for result in results:
+            if isinstance(result, OcrCandidate):
+                language_tag, variant_name, text = (
+                    result.language_tag,
+                    result.variant_name,
+                    result.text,
+                )
+            else:
+                language_tag, text = result
+                variant_name = "source"
+            text = str(text or "").strip()
+            if language_tag.casefold().startswith("ja"):
+                text = cls._normalize_japanese_text(text)
+            if text:
+                candidates.append(OcrCandidate(language_tag, variant_name, text))
+        return candidates
+
+    @classmethod
+    def _choose_variant_result(cls, candidates: list[OcrCandidate]) -> OcrCandidate:
+        agreement = Counter(candidate.text for candidate in candidates)
+        most_agreed = max(agreement.values())
+        if most_agreed > 1:
+            agreed_text = next(
+                text for text, count in agreement.items() if count == most_agreed
             )
-        ]
-        if not scripted:
-            language_tag, text = results[0]
-        else:
-            language_tag, text = max(
-            scripted,
-            key=lambda item: sum(
-                "\u3040" <= char <= "\u30ff"
-                or "\u3400" <= char <= "\u9fff"
-                or "\uac00" <= char <= "\ud7af"
-                for char in item[1]
-            ),
-            )
-        if language_tag.casefold().startswith("ja"):
-            return OcrWorker._normalize_japanese_text(text)
-        return text
+            return next(candidate for candidate in candidates if candidate.text == agreed_text)
+
+        if len(candidates) == 1:
+            return candidates[0]
+
+        def score(candidate: OcrCandidate) -> tuple[float, float, int]:
+            similarity = sum(
+                cls._text_similarity(candidate.text, other.text)
+                for other in candidates
+                if other is not candidate
+            ) / (len(candidates) - 1)
+            # Preserve source as a deterministic last tiebreaker. It is the
+            # unmodified screenshot and avoids a preprocessing artifact
+            # winning when the engine gives no usable confidence signal.
+            source_priority = 1 if candidate.variant_name == "source" else 0
+            return (similarity, cls._text_quality(candidate.text), source_priority)
+
+        return max(candidates, key=score)
+
+    @staticmethod
+    def _text_similarity(left: str, right: str) -> float:
+        # Crops are normally short. Cap comparison length so a huge selection
+        # cannot make variant selection disproportionately expensive.
+        return SequenceMatcher(None, left[:2_048], right[:2_048], autojunk=False).ratio()
+
+    @classmethod
+    def _text_quality(cls, text: str) -> float:
+        visible = [char for char in text if not char.isspace()]
+        if not visible:
+            return -10.0
+        replacements = sum(char == "\ufffd" for char in visible)
+        controls = sum(not char.isprintable() for char in visible)
+        scripted_ratio = cls._scripted_character_count(text) / len(visible)
+        return min(len(visible), 240) / 240 + scripted_ratio - replacements - controls
+
+    @staticmethod
+    def _scripted_character_count(text: str) -> int:
+        return sum(
+            "\u3040" <= char <= "\u30ff"  # Hiragana/Katakana
+            or "\u3400" <= char <= "\u9fff"  # CJK ideographs
+            or "\uac00" <= char <= "\ud7af"  # Hangul
+            for char in text
+        )
 
     @staticmethod
     def _normalize_japanese_text(text: str) -> str:

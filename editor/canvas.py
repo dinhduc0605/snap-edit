@@ -6,7 +6,7 @@ import weakref
 from PyQt6 import sip
 from PyQt6.QtCore import Qt, QRectF, QPointF, pyqtSignal, QEvent
 from PyQt6.QtGui import (
-    QPixmap, QColor, QPainter, QUndoStack, QUndoCommand
+    QPixmap, QColor, QPainter, QTransform, QUndoStack, QUndoCommand
 )
 from PyQt6.QtWidgets import (
     QGraphicsScene, QGraphicsPixmapItem, QGraphicsView,
@@ -638,6 +638,17 @@ class AnnotationCanvas(QGraphicsScene):
             return
 
         if self._current_tool == ToolType.TEXT:
+            from editor.items.text_item import TextItem
+
+            item = self.itemAt(pos, QTransform())
+            if isinstance(item, TextItem):
+                # Text mode is also the edit affordance for existing text.
+                # Enable interaction before forwarding the same mouse press so
+                # QGraphicsTextItem places the cursor at the click location.
+                item.setSelected(True)
+                item.begin_editing()
+                super().mousePressEvent(event)
+                return
             self._add_text(pos)
             return
 
@@ -925,8 +936,24 @@ class CanvasView(QGraphicsView):
         super().focusOutEvent(event)
 
     def fit_in_view_nice(self):
-        """Fit the scene in view with some padding."""
+        """Fit an oversized scene to the canvas bounds, never upscaling."""
         if self.scene():
-            self.fitInView(self.scene().sceneRect(), Qt.AspectRatioMode.KeepAspectRatio)
-            self._zoom = self.transform().m11()
+            scene_rect = self.scene().sceneRect()
+            viewport_rect = self.viewport().rect()
+            if (
+                scene_rect.width() <= viewport_rect.width()
+                and scene_rect.height() <= viewport_rect.height()
+            ):
+                self.resetTransform()
+                self.centerOn(scene_rect.center())
+                self._zoom = 1.0
+            else:
+                scale = min(
+                    viewport_rect.width() / scene_rect.width(),
+                    viewport_rect.height() / scene_rect.height(),
+                )
+                self.resetTransform()
+                self.scale(scale, scale)
+                self.centerOn(scene_rect.center())
+                self._zoom = scale
             self.zoom_changed.emit(self._zoom)

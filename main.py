@@ -364,7 +364,11 @@ class SnapEditApp:
         self._on_text_selection_cancelled()
         if pixmap.isNull() or (self._ocr_worker and self._ocr_worker.isRunning()):
             return
-        self._ocr_worker = OcrWorker(pixmap, self._app)
+        self._ocr_worker = OcrWorker(
+            pixmap,
+            self._app,
+            language=self._config.get("ocr.language", "auto"),
+        )
         self._ocr_worker.text_ready.connect(self._on_ocr_ready)
         self._ocr_worker.failed.connect(self._on_ocr_failed)
         self._ocr_worker.finished.connect(self._on_ocr_finished)

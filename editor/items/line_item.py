@@ -162,7 +162,7 @@ class LineItem(QGraphicsPathItem):
 
         # --- Line ---
         pen = QPen(self._pen_color, self._pen_width, Qt.PenStyle.SolidLine)
-        pen.setCapStyle(Qt.PenCapStyle.RoundCap)
+        pen.setCapStyle(Qt.PenCapStyle.SquareCap)
         painter.setPen(pen)
         painter.drawLine(self._start_point, self._end_point)
 

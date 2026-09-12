@@ -150,7 +150,14 @@ class EditorWindow(QMainWindow):
         self._canvas.set_text_bg_color(self._text_bg_color)
         self._canvas.set_fill_enabled(bool(self._config.get("fill_shapes", False)))
         self._view = CanvasView(self._canvas)
-        layout.addWidget(self._view)
+        # Keep a visible gutter around the complete canvas region so the
+        # screenshot does not visually merge into the editor's chrome.
+        self._canvas_container = QWidget()
+        canvas_layout = QVBoxLayout(self._canvas_container)
+        canvas_layout.setContentsMargins(16, 16, 16, 16)
+        canvas_layout.setSpacing(0)
+        canvas_layout.addWidget(self._view)
+        layout.addWidget(self._canvas_container)
 
         # Status bar
         self._statusbar = QStatusBar()

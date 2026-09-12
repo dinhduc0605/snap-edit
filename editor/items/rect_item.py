@@ -76,8 +76,8 @@ class RectItem(ResizableItem, QGraphicsRectItem):
     def _apply_pen(self) -> None:
         """Rebuild and apply the QPen from current properties."""
         pen = QPen(self._pen_color, self._pen_width, Qt.PenStyle.SolidLine)
-        pen.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
-        pen.setCapStyle(Qt.PenCapStyle.RoundCap)
+        pen.setJoinStyle(Qt.PenJoinStyle.MiterJoin)
+        pen.setCapStyle(Qt.PenCapStyle.SquareCap)
         self.setPen(pen)
 
     def set_pen_color(self, color: QColor) -> None:
@@ -126,8 +126,8 @@ class RectItem(ResizableItem, QGraphicsRectItem):
 
         # --- Stroke ---
         pen = QPen(self._pen_color, self._pen_width, Qt.PenStyle.SolidLine)
-        pen.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
-        pen.setCapStyle(Qt.PenCapStyle.RoundCap)
+        pen.setJoinStyle(Qt.PenJoinStyle.MiterJoin)
+        pen.setCapStyle(Qt.PenCapStyle.SquareCap)
         painter.setPen(pen)
 
         painter.drawRect(self.rect())

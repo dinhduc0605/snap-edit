@@ -65,7 +65,10 @@ If you prefer to run the application from the Python source code, follow these s
 Screen text extraction uses the OCR language packs installed for the current
 Windows user. Install the required language pack with its OCR feature enabled
 in **Settings → Time & language → Language & region** before scanning that
-language.
+language. In **Settings → General → Text OCR**, choose **Japanese** for
+Japanese UI/text: SnapEdit will try a few lightweight image variants before
+copying the most stable result. **Auto** and **English** retain the faster
+single-pass behavior.
 
 ## 🛠️ Editor Shortcuts
 

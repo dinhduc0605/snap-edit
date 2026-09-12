@@ -2,7 +2,7 @@
 text_item.py - Editable text annotation item.
 
 Double-click to enter edit mode; single-click to select and move.
-A semi-transparent rounded-rectangle background is painted behind the text.
+A semi-transparent square-corner background is painted behind the text.
 """
 
 from PyQt6.QtCore import Qt, QRectF
@@ -25,7 +25,6 @@ _DEFAULT_TEXT_COLOR = QColor("#FF0000")
 _DEFAULT_BG_COLOR = QColor(255, 255, 255, 180)
 _PLACEHOLDER = "Type here..."
 _BG_BORDER_COLOR = QColor(200, 200, 200, 120)
-_BG_RADIUS = 4.0
 
 
 class TextItem(QGraphicsTextItem):
@@ -121,6 +120,15 @@ class TextItem(QGraphicsTextItem):
         self._bg_color = QColor(color)
         self.update()
 
+    def begin_editing(self) -> None:
+        """Focus this annotation and make its text editable."""
+        if self._is_placeholder and self.toPlainText() == _PLACEHOLDER:
+            self._is_placeholder = False
+            self.setPlainText("")
+        else:
+            self._is_placeholder = False
+        self._enter_edit_mode()
+
     # ------------------------------------------------------------------
     # Edit-mode helpers
     # ------------------------------------------------------------------
@@ -167,14 +175,14 @@ class TextItem(QGraphicsTextItem):
         option: QStyleOptionGraphicsItem,
         widget: QWidget | None = None,
     ) -> None:
-        """Draw background rect, then delegate text rendering to super."""
+        """Draw a square-corner background, then render the text."""
         painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
 
         # --- Background ---
         bg_rect = super().boundingRect().adjusted(-2, -2, 2, 2)
         painter.setPen(QPen(_BG_BORDER_COLOR, 1.0, Qt.PenStyle.SolidLine))
         painter.setBrush(QBrush(self._bg_color))
-        painter.drawRoundedRect(bg_rect, _BG_RADIUS, _BG_RADIUS)
+        painter.drawRect(bg_rect)
 
         # --- Text ---
         super().paint(painter, option, widget)
@@ -185,12 +193,7 @@ class TextItem(QGraphicsTextItem):
 
     def mouseDoubleClickEvent(self, event: QGraphicsSceneMouseEvent) -> None:
         """Enter edit mode on double-click."""
-        if self._is_placeholder and self.toPlainText() == _PLACEHOLDER:
-            self._is_placeholder = False
-            self.setPlainText("")
-        else:
-            self._is_placeholder = False
-        self._enter_edit_mode()
+        self.begin_editing()
         super().mouseDoubleClickEvent(event)
 
         # QGraphicsTextItem selects the word under a double-click. Clear that

@@ -57,7 +57,7 @@ class OcrTests(unittest.TestCase):
         image.save(stream, format="PNG")
         pixmap = QPixmap.fromImage(QImage.fromData(stream.getvalue()))
 
-        worker = OcrWorker(pixmap)
+        worker = OcrWorker(pixmap, language="ja")
         output = []
         errors = []
         worker.text_ready.connect(output.append)

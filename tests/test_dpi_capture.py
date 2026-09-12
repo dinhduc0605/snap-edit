@@ -15,12 +15,15 @@ from PyQt6 import sip
 from PyQt6.QtCore import QEvent, QPoint, QPointF, QRect, QRectF, QSize, Qt
 from PyQt6.QtGui import QColor, QFont, QMouseEvent, QPixmap
 from PyQt6.QtWidgets import QApplication
+from PyQt6.QtTest import QTest
 
 from capture.region import RegionSelector
 from capture.timed_region import TimedRegionSelector
 from editor.editor_window import EditorWindow
 from editor.canvas import TextSettingsPopup, ShapeSettingsPopup
+from editor.toolbar import ToolType
 from editor.gallery_dialog import GalleryDialog
+from editor.items.arrow_item import ArrowItem
 from editor.items.rect_item import RectItem
 from editor.items.text_item import TextItem
 from settings.config import Config, DEFAULT_CONFIG
@@ -76,6 +79,20 @@ class DpiCaptureTests(unittest.TestCase):
             self.assertEqual(editor._canvas._pen_width, round(5 * scale))
             self.assertEqual(editor._canvas._text_size, round(14 * scale))
 
+    def test_canvas_container_has_scaled_outer_padding(self):
+        editor = self.editor()
+        margins = editor._canvas_container.layout().contentsMargins()
+        self.assertEqual(
+            (margins.left(), margins.top(), margins.right(), margins.bottom()),
+            (16, 16, 16, 16),
+        )
+        editor._ui_scaler.apply(2, resize=False)
+        margins = editor._canvas_container.layout().contentsMargins()
+        self.assertEqual(
+            (margins.left(), margins.top(), margins.right(), margins.bottom()),
+            (32, 32, 32, 32),
+        )
+
     def test_monitor_transition_does_not_edit_selected_annotations(self):
         editor = self.editor()
         editor._ui_scaler.apply(2, resize=False)
@@ -98,6 +115,43 @@ class DpiCaptureTests(unittest.TestCase):
         editor._ui_scaler.apply(2, resize=False)
         self.assertEqual(canvas._pen_width, 9)
 
+    def test_text_tool_focuses_existing_text_instead_of_adding_item(self):
+        editor = self.editor()
+        editor.show()
+        self.app.processEvents()
+        canvas = editor._canvas
+        canvas._add_text(QPointF(100, 80))
+        text = next(item for item in canvas.items() if isinstance(item, TextItem))
+        text.setPlainText("Existing text")
+        text._exit_edit_mode()
+        canvas.set_tool(ToolType.TEXT)
+        item_count = len(canvas.get_annotation_items())
+
+        click_pos = editor._view.mapFromScene(
+            text.mapToScene(text.boundingRect().center())
+        )
+        QTest.mouseClick(
+            editor._view.viewport(), Qt.MouseButton.LeftButton,
+            Qt.KeyboardModifier.NoModifier, click_pos,
+        )
+        self.app.processEvents()
+
+        self.assertEqual(len(canvas.get_annotation_items()), item_count)
+        self.assertTrue(text.hasFocus())
+        self.assertEqual(
+            text.textInteractionFlags(), Qt.TextInteractionFlag.TextEditorInteraction,
+        )
+
+    def test_short_arrowhead_is_constrained_to_arrow_length(self):
+        arrow = ArrowItem(QPointF(0, 0), QPointF(8, 0), pen_width=20)
+        head = arrow._arrowhead_polygon()
+        self.assertFalse(head.isEmpty())
+        self.assertLessEqual(head.boundingRect().width(), 8)
+        self.assertGreaterEqual(head.boundingRect().left(), 0)
+
+        zero_length_arrow = ArrowItem(QPointF(0, 0), QPointF(0, 0))
+        self.assertTrue(zero_length_arrow._arrowhead_polygon().isEmpty())
+
     def test_new_bubbles_scale_but_existing_bubbles_do_not(self):
         canvas = self.editor()._canvas
         canvas.set_annotation_scale(2, 6, 28)
@@ -116,7 +170,22 @@ class DpiCaptureTests(unittest.TestCase):
         editor.show()
         self.assertEqual(editor._canvas.sceneRect(), QRect(0, 0, 3840, 2160).toRectF())
         self.assertLess(editor._view.transform().m11(), 1)
+        zoom = editor._view.transform().m11()
+        viewport = editor._view.viewport().size()
+        horizontal_margin = (viewport.width() - capture.width() * zoom) / 2
+        vertical_margin = (viewport.height() - capture.height() * zoom) / 2
+        self.assertLessEqual(min(horizontal_margin, vertical_margin), 1)
         self.assertEqual(editor._canvas.export_to_pixmap().size(), capture.size())
+
+    def test_small_capture_opens_at_100_percent(self):
+        capture = QPixmap(100, 100)
+        capture.fill(QColor("#123456"))
+        editor = self.keep(EditorWindow(capture, self.config))
+        editor.show()
+        self.app.processEvents()
+
+        self.assertEqual(editor._view.transform().m11(), 1)
+        self.assertEqual(editor._zoom_label.text(), "100%")
 
     def test_region_release_crops_frozen_undimmed_pixels_without_mss(self):
         selector = self.keep(RegionSelector())

@@ -122,12 +122,12 @@ class ArrowItem(QGraphicsPathItem):
         """
         Compute the arrowhead triangle at the end point.
 
-        Size scales with pen width:
-            base = max(4 * pen_width, 12)
-            height = max(6 * pen_width, 12)
+        The nominal size scales with pen width, but is capped relative to the
+        arrow length so a short arrow cannot turn into an oversized triangle.
         """
-        base = max(4.0 * self._pen_width, 12.0)
-        height = max(6.0 * self._pen_width, 12.0)
+        base, height, length = self._arrowhead_dimensions()
+        if length <= 0:
+            return QPolygonF()
 
         angle = math.atan2(
             self._end_point.y() - self._start_point.y(),
@@ -148,6 +148,25 @@ class ArrowItem(QGraphicsPathItem):
         )
 
         return QPolygonF([tip, left, right])
+
+    def _arrowhead_dimensions(self) -> tuple[float, float, float]:
+        """Return arrowhead base, height, and total arrow length.
+
+        A head may use at most 60% of the arrow's length. Its base preserves
+        the normal aspect ratio while shrinking with it, so even a very short
+        arrow remains a compact, readable arrow instead of a large triangle.
+        """
+        dx = self._end_point.x() - self._start_point.x()
+        dy = self._end_point.y() - self._start_point.y()
+        length = math.hypot(dx, dy)
+        if length <= 0:
+            return 0.0, 0.0, 0.0
+
+        nominal_base = max(4.0 * self._pen_width, 12.0)
+        nominal_height = max(6.0 * self._pen_width, 12.0)
+        height = min(nominal_height, length * 0.6)
+        base = min(nominal_base, height * nominal_base / nominal_height)
+        return base, height, length
 
     # ------------------------------------------------------------------
     # Path construction
@@ -205,32 +224,31 @@ class ArrowItem(QGraphicsPathItem):
         """Draw the line, arrowhead, and endpoint handles when selected."""
         painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
 
-        # Calculate line end point to be inside the arrowhead to prevent the
-        # line's round cap from sticking out past the sharp tip.
+        # Draw the shaft only up to the arrowhead base. A FlatCap keeps the
+        # end square without adding a visible block to short arrows.
         dx = self._end_point.x() - self._start_point.x()
         dy = self._end_point.y() - self._start_point.y()
-        length = math.hypot(dx, dy)
-        
-        if length > 0:
-            height = max(12.0, float(self._pen_width * 4))
-            # Pull the line back by half the arrowhead height
-            pullback = min(height / 2.0, length)
+        _, height, length = self._arrowhead_dimensions()
+
+        if length > height:
             angle = math.atan2(dy, dx)
             line_end = QPointF(
-                self._end_point.x() - pullback * math.cos(angle),
-                self._end_point.y() - pullback * math.sin(angle)
+                self._end_point.x() - height * math.cos(angle),
+                self._end_point.y() - height * math.sin(angle),
             )
-            
+
             # --- Line ---
             pen = QPen(self._pen_color, self._pen_width, Qt.PenStyle.SolidLine)
-            pen.setCapStyle(Qt.PenCapStyle.RoundCap)
+            pen.setCapStyle(Qt.PenCapStyle.FlatCap)
             painter.setPen(pen)
             painter.drawLine(self._start_point, line_end)
 
         # --- Arrowhead (filled triangle) ---
-        painter.setPen(Qt.PenStyle.NoPen)
-        painter.setBrush(QBrush(self._pen_color))
-        painter.drawPolygon(self._arrowhead_polygon())
+        arrowhead = self._arrowhead_polygon()
+        if not arrowhead.isEmpty():
+            painter.setPen(Qt.PenStyle.NoPen)
+            painter.setBrush(QBrush(self._pen_color))
+            painter.drawPolygon(arrowhead)
 
         # --- Handles ---
         if self.isSelected():

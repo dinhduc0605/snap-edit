@@ -370,6 +370,32 @@ class SettingsDialog(QDialog):
             self._startup_cb.setToolTip("This option is only available on Windows")
 
         layout.addWidget(group)
+
+        ocr_group = QGroupBox("Text OCR")
+        ocr_layout = QVBoxLayout(ocr_group)
+        ocr_layout.setContentsMargins(20, 18, 20, 18)
+        ocr_layout.setSpacing(6)
+
+        ocr_form = QFormLayout()
+        ocr_form.setLabelAlignment(Qt.AlignmentFlag.AlignLeft)
+        ocr_form.setHorizontalSpacing(24)
+        ocr_form.setVerticalSpacing(8)
+        self._ocr_language_combo = QComboBox()
+        self._ocr_language_combo.addItem("Auto (installed languages)", "auto")
+        self._ocr_language_combo.addItem("Japanese", "ja")
+        self._ocr_language_combo.addItem("English", "en")
+        self._ocr_language_combo.setAccessibleName("Text OCR recognition language")
+        ocr_form.addRow(QLabel("Recognition language"), self._ocr_language_combo)
+        ocr_layout.addLayout(ocr_form)
+
+        ocr_description = QLabel(
+            "Japanese mode tries a few lightweight image variants to preserve "
+            "small kana and stroke details. It can take slightly longer."
+        )
+        ocr_description.setObjectName("pageDescription")
+        ocr_description.setWordWrap(True)
+        ocr_layout.addWidget(ocr_description)
+        layout.addWidget(ocr_group)
         layout.addStretch()
         self._stack.addWidget(tab)
 
@@ -457,6 +483,14 @@ class SettingsDialog(QDialog):
             self._config.get("auto_copy_clipboard", False)
         )
 
+        language = str(self._config.get("ocr.language", "auto")).casefold()
+        if language.startswith("ja"):
+            language = "ja"
+        elif language.startswith("en"):
+            language = "en"
+        idx = self._ocr_language_combo.findData(language)
+        self._ocr_language_combo.setCurrentIndex(idx if idx >= 0 else 0)
+
     @staticmethod
     def _format_hotkey_display(hotkey_str: str) -> str:
         """Convert a stored hotkey like 'ctrl+shift+f' into the
@@ -522,6 +556,7 @@ class SettingsDialog(QDialog):
         self._config.set("save_directory", self._save_dir_edit.text())
         self._config.set("default_format", self._format_combo.currentText().lower())
         self._config.set("auto_copy_clipboard", self._auto_copy_cb.isChecked())
+        self._config.set("ocr.language", self._ocr_language_combo.currentData())
 
         self._config.save()
         self.accept()

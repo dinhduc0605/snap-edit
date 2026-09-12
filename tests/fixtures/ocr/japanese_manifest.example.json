@@ -1,0 +1,10 @@
+{
+  "language": "ja",
+  "cases": [
+    {
+      "name": "Replace with a representative Japanese UI crop",
+      "image": "replace-with-your-crop.png",
+      "expected": "Exact text visible in the crop"
+    }
+  ]
+}
