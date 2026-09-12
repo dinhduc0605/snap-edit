@@ -56,6 +56,11 @@ def _toolbar_icon(name: str, size: int = 24) -> QIcon:
         painter.drawLine(QPointF(5.0, 18.0), QPointF(11.0, 4.0))
         painter.drawLine(QPointF(11.0, 4.0), QPointF(17.0, 18.0))
         painter.drawLine(QPointF(7.5, 12.5), QPointF(14.5, 12.5))
+    elif name == "ocr":
+        painter.drawRect(QRectF(3.5, 4.0, 15.0, 14.0))
+        painter.drawLine(QPointF(6.5, 8.0), QPointF(15.5, 8.0))
+        painter.drawLine(QPointF(6.5, 11.0), QPointF(13.5, 11.0))
+        painter.drawLine(QPointF(6.5, 14.0), QPointF(15.5, 14.0))
     elif name == "line":
         painter.drawLine(QPointF(3.0, 11.0), QPointF(19.0, 11.0))
     elif name == "arrow":
@@ -231,6 +236,7 @@ class ToolType:
     """Enum-like class for tool types."""
     SELECT  = "select"
     GRAB    = "grab"
+    OCR     = "ocr"
     TEXT    = "text"
     ARROW   = "arrow"
     LINE    = "line"
@@ -245,7 +251,7 @@ class Toolbar(QWidget):
     Emits signals when tool, color, or stroke size changes.
 
     Layout (left → right):
-      Select | Text [TextColor] [TextBG] [TextSize] | Line Arrow Rect Ellipse
+      Select | Text OCR | Text [TextColor] [TextBG] [TextSize] | Line Arrow Rect Ellipse
              | StrokeColor StrokeSize Fill | Bubble | → Undo Redo Copy Save
     """
 
@@ -272,6 +278,7 @@ class Toolbar(QWidget):
                  initial_fill: bool = False):
         super().__init__(parent)
         self._current_tool = ToolType.SELECT
+        self._ocr_hint = "Choose Text OCR to read text in this image"
         self._setup_ui(
             initial_color, initial_width, initial_bubble_size,
             initial_text_size, initial_text_color, initial_text_bg_color,
@@ -304,6 +311,7 @@ class Toolbar(QWidget):
         # Primary tools stay visible; properties are contextual.
         for tool_type, icon_name, tooltip in [
             (ToolType.SELECT,  "select",  "Select (V)"),
+            (ToolType.OCR,     "ocr",     "Text OCR (O)"),
             (ToolType.TEXT,    "text",    "Text (T)"),
             (ToolType.LINE,    "line",    "Line (L)"),
             (ToolType.ARROW,   "arrow",   "Arrow (A)"),
@@ -458,6 +466,7 @@ class Toolbar(QWidget):
 
     def _update_context_controls(self, tool_type: str):
         is_text = tool_type == ToolType.TEXT
+        is_ocr = tool_type == ToolType.OCR
         is_shape = tool_type in (
             ToolType.LINE, ToolType.ARROW, ToolType.RECT,
             ToolType.ELLIPSE, ToolType.BUBBLE,
@@ -467,9 +476,15 @@ class Toolbar(QWidget):
         self._context_hint.setVisible(not is_text and not is_shape)
         self._context_title.setText(
             "Text properties" if is_text else
+            "Text OCR" if is_ocr else
             "Shape properties" if is_shape else
             "Properties"
         )
+
+        if is_ocr:
+            self._context_hint.setText(self._ocr_hint)
+        elif not is_text and not is_shape:
+            self._context_hint.setText("Select a tool to see its properties")
 
         if not is_shape:
             return
@@ -482,6 +497,12 @@ class Toolbar(QWidget):
         self._width_spin.setVisible(not is_bubble)
         self._bubble_size_spin.setVisible(is_bubble)
         self._fill_cb.setVisible(supports_fill)
+
+    def set_ocr_hint(self, hint: str):
+        """Update the contextual instruction/progress text for Text OCR mode."""
+        self._ocr_hint = hint
+        if self._current_tool == ToolType.OCR:
+            self._context_hint.setText(hint)
 
     def resizeEvent(self, event):
         """Reduce secondary chrome at medium/small window widths."""

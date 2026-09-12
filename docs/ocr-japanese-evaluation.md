@@ -4,8 +4,8 @@ SnapEdit continues to use the Windows OCR language packs already installed on
 the PC. It does not download a model or keep another OCR process in memory.
 
 When **Settings → General → Text OCR → Recognition language** is set to
-**Japanese**, SnapEdit sends three compact candidates to the Japanese Windows
-recognizer:
+**Japanese**, both region Text OCR and editor Text OCR send three compact
+candidates to the Japanese Windows recognizer:
 
 1. The unchanged selected pixels, as a safe fallback.
 2. A crop with a background-coloured border and a limited upscale for small
@@ -14,8 +14,10 @@ recognizer:
 
 If variants agree, that text wins. If they differ, SnapEdit chooses the most
 similar result and retains the untouched crop as the deterministic tiebreaker.
-This is deliberately conservative because the legacy Windows OCR API exposes
-no confidence score.
+For editor OCR, the word rectangles from enlarged/padded candidates are mapped
+back to the original screenshot before highlighting, so stronger recognition
+does not shift the selectable text. This is deliberately conservative because
+the legacy Windows OCR API exposes no confidence score.
 
 ## Establish a local baseline
 

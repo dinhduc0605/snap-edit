@@ -75,6 +75,7 @@ single-pass behavior.
 While the editor window is open, you can use these shortcuts to speed up your workflow:
 
 - `V`: Select tool
+- `O`: Text OCR — highlight recognized text, drag to select words, then press `Ctrl + C`
 - `T`: Text tool
 - `B`: Number Bubble tool
 - `L`: Line tool

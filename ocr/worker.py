@@ -41,6 +41,28 @@ class OcrCandidate:
     text: str
 
 
+@dataclass(frozen=True)
+class OcrWord:
+    """A recognized word and its rectangle in the original image pixels."""
+
+    text: str
+    x: float
+    y: float
+    width: float
+    height: float
+    line_index: int
+    word_index: int
+
+
+@dataclass(frozen=True)
+class OcrLayout:
+    """Recognized text plus word geometry for editor-side text selection."""
+
+    language_tag: str
+    text: str
+    words: tuple[OcrWord, ...]
+
+
 class OcrWorker(QThread):
     text_ready = pyqtSignal(str)
     failed = pyqtSignal(str)
@@ -210,8 +232,12 @@ class OcrWorker(QThread):
         return [tag for tag in tags if tag.casefold().startswith(preference)]
 
     def _missing_language_message(self) -> str:
+        return self.missing_language_message(self._language_preference)
+
+    @staticmethod
+    def missing_language_message(language_preference: str) -> str:
         language_name = {"ja": "tiếng Nhật", "en": "tiếng Anh"}.get(
-            self._language_preference, "đã chọn"
+            OcrWorker.normalize_language_preference(language_preference), "đã chọn"
         )
         return (
             f"Windows chưa cài gói OCR {language_name}. "
@@ -278,12 +304,17 @@ class OcrWorker(QThread):
             else:
                 language_tag, text = result
                 variant_name = "source"
-            text = str(text or "").strip()
-            if language_tag.casefold().startswith("ja"):
-                text = cls._normalize_japanese_text(text)
+            text = cls._normalize_text_for_language(language_tag, text)
             if text:
                 candidates.append(OcrCandidate(language_tag, variant_name, text))
         return candidates
+
+    @classmethod
+    def _normalize_text_for_language(cls, language_tag: str, text: object) -> str:
+        text = str(text or "").strip()
+        if language_tag.casefold().startswith("ja"):
+            return cls._normalize_japanese_text(text)
+        return text
 
     @classmethod
     def _choose_variant_result(cls, candidates: list[OcrCandidate]) -> OcrCandidate:
@@ -376,3 +407,199 @@ class OcrWorker(QThread):
                 normalized.extend(text[index:end])
             index = end
         return "".join(normalized)
+
+
+class OcrLayoutWorker(QThread):
+    """Read word rectangles from Windows OCR for selectable editor text.
+
+    Japanese mode uses the same lightweight source/padded/enhanced candidates
+    as region OCR. Each candidate records its coordinate transform, so words
+    still highlight their true positions on the original screenshot.
+    """
+
+    layout_ready = pyqtSignal(object)
+    failed = pyqtSignal(str)
+
+    def __init__(
+        self,
+        pixmap: QPixmap,
+        parent=None,
+        *,
+        language: str = _LANGUAGE_AUTO,
+        preprocess: bool = True,
+    ):
+        super().__init__(parent)
+        image = pixmap.toImage().convertToFormat(QImage.Format.Format_RGBA8888)
+        self._width = image.width()
+        self._height = image.height()
+        self._rgba_pixels = OcrWorker._qimage_rgba_bytes(image)
+        self._language_preference = OcrWorker.normalize_language_preference(language)
+        self._preprocess = preprocess
+
+    def run(self) -> None:
+        try:
+            layout = asyncio.run(self._recognize())
+            if layout is not None and not self.isInterruptionRequested():
+                self.layout_ready.emit(layout)
+        except Exception as exc:
+            if not self.isInterruptionRequested():
+                self.failed.emit(str(exc))
+
+    async def _recognize(self) -> OcrLayout | None:
+        _add_vendor_path()
+        from winrt.windows.globalization import Language
+        from winrt.windows.graphics.imaging import BitmapPixelFormat, SoftwareBitmap
+        from winrt.windows.media.ocr import OcrEngine
+        from winrt.windows.storage.streams import DataWriter
+
+        available_tags = [
+            language.language_tag
+            for language in OcrEngine.available_recognizer_languages
+        ]
+        if not available_tags:
+            raise RuntimeError(
+                "Windows không có gói ngôn ngữ OCR phù hợp. "
+                "Hãy cài Language pack có tính năng OCR trong Windows Settings."
+            )
+        language_tags = OcrWorker._select_language_tags(
+            available_tags, self._language_preference
+        )
+        if not language_tags:
+            raise RuntimeError(
+                OcrWorker.missing_language_message(self._language_preference)
+            )
+
+        max_dimension = int(
+            getattr(OcrEngine, "max_image_dimension", 10_000) or 10_000
+        )
+        preprocessor = OcrPreprocessor(max_dimension)
+        layouts: list[OcrLayout] = []
+        for language_tag in language_tags:
+            if self.isInterruptionRequested():
+                return None
+            engine = OcrEngine.try_create_from_language(Language(language_tag))
+            if engine is None:
+                continue
+            try:
+                variants = preprocessor.prepare(
+                    self._width,
+                    self._height,
+                    self._rgba_pixels,
+                    japanese_variants=(
+                        self._preprocess
+                        and self._language_preference == "ja"
+                        and language_tag.casefold().startswith("ja")
+                    ),
+                )
+                for variant in variants:
+                    if self.isInterruptionRequested():
+                        return None
+                    layout = await self._recognize_layout_variant(
+                        engine,
+                        variant,
+                        language_tag,
+                        BitmapPixelFormat,
+                        SoftwareBitmap,
+                        DataWriter,
+                    )
+                    if layout.text and layout.words:
+                        layouts.append(layout)
+            finally:
+                OcrWorker._close_winrt_object(engine)
+
+        if self.isInterruptionRequested():
+            return None
+        if not layouts:
+            raise RuntimeError(
+                "Không thể nhận diện chữ trong ảnh này. "
+                "Hãy thử dùng ảnh rõ nét hơn."
+            )
+
+        selected_text = OcrWorker._select_result(
+            [OcrCandidate(layout.language_tag, "source", layout.text)
+             for layout in layouts],
+            self._language_preference,
+        )
+        for layout in layouts:
+            if layout.text == selected_text:
+                return layout
+        return layouts[0]
+
+    async def _recognize_layout_variant(
+        self,
+        engine,
+        variant: OcrImageVariant,
+        language_tag: str,
+        bitmap_pixel_format,
+        software_bitmap_type,
+        data_writer_type,
+    ) -> OcrLayout:
+        bitmap = None
+        writer = None
+        result = None
+        try:
+            bitmap = software_bitmap_type(
+                bitmap_pixel_format.BGRA8, variant.width, variant.height
+            )
+            writer = data_writer_type()
+            writer.write_bytes(variant.bgra_pixels)
+            bitmap.copy_from_buffer(writer.detach_buffer())
+            result = await engine.recognize_async(bitmap)
+            return self._layout_from_result(result, language_tag, variant)
+        finally:
+            OcrWorker._close_winrt_object(result)
+            OcrWorker._close_winrt_object(writer)
+            OcrWorker._close_winrt_object(bitmap)
+
+    def _layout_from_result(
+        self, result, language_tag: str, variant: OcrImageVariant
+    ) -> OcrLayout:
+        """Convert WinRT word rectangles back to original screenshot pixels."""
+        words: list[OcrWord] = []
+        lines = list(result.lines or [])
+        for line_index, line in enumerate(lines):
+            for word_index, word in enumerate(line.words or []):
+                text = str(word.text or "").strip()
+                bounds = word.bounding_rect
+                if not text or bounds is None:
+                    continue
+                left = max(0.0, min(
+                    (float(bounds.x) - variant.source_offset_x)
+                    * variant.source_scale_x,
+                    self._width,
+                ))
+                top = max(0.0, min(
+                    (float(bounds.y) - variant.source_offset_y)
+                    * variant.source_scale_y,
+                    self._height,
+                ))
+                right = max(left, min(
+                    (float(bounds.x) + float(bounds.width) - variant.source_offset_x)
+                    * variant.source_scale_x,
+                    self._width,
+                ))
+                bottom = max(top, min(
+                    (float(bounds.y) + float(bounds.height) - variant.source_offset_y)
+                    * variant.source_scale_y,
+                    self._height,
+                ))
+                if right <= left or bottom <= top:
+                    continue
+                words.append(OcrWord(
+                    text=text,
+                    x=left,
+                    y=top,
+                    width=right - left,
+                    height=bottom - top,
+                    line_index=line_index,
+                    word_index=word_index,
+                ))
+
+        raw_text = str(result.text or "")
+        if not raw_text:
+            raw_text = "\n".join(str(line.text or "") for line in lines)
+        return OcrLayout(
+            language_tag=language_tag,
+            text=OcrWorker._normalize_text_for_language(language_tag, raw_text),
+            words=tuple(words),
+        )

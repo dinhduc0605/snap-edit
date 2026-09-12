@@ -459,10 +459,12 @@ class AnnotationCanvas(QGraphicsScene):
 
     item_added = pyqtSignal()
     bubble_count_changed = pyqtSignal(int)
+    ocr_selection_changed = pyqtSignal(str)
 
     def __init__(self, pixmap: QPixmap = None, parent=None):
         super().__init__(parent)
         self._background_item = None
+        self._ocr_overlay = None
         self._disposed = False
         self._settings_popup = None
         self._current_tool = ToolType.SELECT
@@ -494,6 +496,7 @@ class AnnotationCanvas(QGraphicsScene):
         self._drawing = False
         self._current_draw_item = None
         self._undo_stack.clear()
+        self.clear_ocr_overlay()
         self.clear()
         self._background_item = None
 
@@ -527,6 +530,7 @@ class AnnotationCanvas(QGraphicsScene):
 
     def set_background(self, pixmap: QPixmap):
         """Set the screenshot as the scene background."""
+        self.clear_ocr_overlay()
         if self._background_item:
             self.removeItem(self._background_item)
         self._background_item = QGraphicsPixmapItem(pixmap)
@@ -540,6 +544,8 @@ class AnnotationCanvas(QGraphicsScene):
     def set_tool(self, tool: str):
         """Set the current drawing tool."""
         self._current_tool = tool
+        if tool != ToolType.OCR:
+            self.clear_ocr_overlay()
         # Deselect all when changing tool
         for item in self.selectedItems():
             item.setSelected(False)
@@ -547,6 +553,41 @@ class AnnotationCanvas(QGraphicsScene):
         for view in self.views():
             if hasattr(view, 'set_tool'):
                 view.set_tool(tool)
+
+    def show_ocr_layout(self, layout):
+        """Place an interactive, non-exported highlight layer over OCR words."""
+        from editor.ocr_overlay import OcrTextOverlay
+
+        self.clear_ocr_overlay()
+        overlay = OcrTextOverlay(layout, self.sceneRect())
+        overlay.selection_changed.connect(self.ocr_selection_changed)
+        self._ocr_overlay = overlay
+        self.addItem(overlay)
+
+    def clear_ocr_overlay(self):
+        """Discard transient OCR UI without touching annotations or undo state."""
+        overlay = self._ocr_overlay
+        self._ocr_overlay = None
+        if overlay is not None and not sip.isdeleted(overlay):
+            self.removeItem(overlay)
+            overlay.deleteLater()
+        self.ocr_selection_changed.emit("")
+
+    def has_ocr_overlay(self) -> bool:
+        return self._ocr_overlay is not None and not sip.isdeleted(self._ocr_overlay)
+
+    def selected_ocr_text(self) -> str:
+        if not self.has_ocr_overlay():
+            return ""
+        return self._ocr_overlay.selected_text()
+
+    def has_ocr_selection(self) -> bool:
+        return self.has_ocr_overlay() and self._ocr_overlay.has_selection()
+
+    def ocr_word_count(self) -> int:
+        if not self.has_ocr_overlay():
+            return 0
+        return self._ocr_overlay.word_count
 
     def set_pen_color(self, color: QColor):
         """Set the pen color for new items and selected items."""
@@ -633,6 +674,10 @@ class AnnotationCanvas(QGraphicsScene):
             super().mousePressEvent(event)
             return
 
+        if self._current_tool == ToolType.OCR:
+            super().mousePressEvent(event)
+            return
+
         if self._current_tool == ToolType.BUBBLE:
             self._add_bubble(pos)
             return
@@ -660,6 +705,9 @@ class AnnotationCanvas(QGraphicsScene):
         super().mousePressEvent(event)
 
     def mouseMoveEvent(self, event):
+        if self._current_tool == ToolType.OCR:
+            super().mouseMoveEvent(event)
+            return
         if self._drawing and self._current_tool in (ToolType.ARROW, ToolType.LINE,
                                                       ToolType.RECT, ToolType.ELLIPSE):
             pos = event.scenePos()
@@ -673,6 +721,9 @@ class AnnotationCanvas(QGraphicsScene):
             super().mouseMoveEvent(event)
 
     def mouseReleaseEvent(self, event):
+        if self._current_tool == ToolType.OCR:
+            super().mouseReleaseEvent(event)
+            return
         if self._drawing and self._current_draw_item is not None:
             self._drawing = False
             # Remove and re-add via undo command
@@ -762,17 +813,25 @@ class AnnotationCanvas(QGraphicsScene):
         rect = self.sceneRect()
         pixmap = QPixmap(int(rect.width()), int(rect.height()))
         pixmap.fill(Qt.GlobalColor.white)
+        overlay = self._ocr_overlay
+        overlay_visible = self.has_ocr_overlay() and overlay.isVisible()
+        if overlay_visible:
+            overlay.setVisible(False)
         painter = QPainter(pixmap)
-        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-        painter.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform)
-        self.render(painter, QRectF(pixmap.rect()), rect)
-        painter.end()
+        try:
+            painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+            painter.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform)
+            self.render(painter, QRectF(pixmap.rect()), rect)
+        finally:
+            painter.end()
+            if overlay_visible and not sip.isdeleted(overlay):
+                overlay.setVisible(True)
         return pixmap
 
     def get_annotation_items(self) -> list:
         """Get all annotation items (excluding background)."""
         return [item for item in self.items()
-                if item is not self._background_item]
+                if item is not self._background_item and item is not self._ocr_overlay]
 
     def contextMenuEvent(self, event):
         """Show settings context menu on right-click over an item in Select mode."""

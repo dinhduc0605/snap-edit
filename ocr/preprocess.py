@@ -14,12 +14,22 @@ from PIL import Image, ImageFilter, ImageOps, ImageStat
 
 @dataclass(frozen=True)
 class OcrImageVariant:
-    """One BGRA image ready for ``Windows.Graphics.Imaging.SoftwareBitmap``."""
+    """One BGRA image plus its mapping back to source-image coordinates.
+
+    A word rectangle ``(x, y)`` returned for this variant maps to the original
+    image as ``(x - source_offset_x) * source_scale_x`` (and likewise for
+    ``y``). Keeping this alongside the pixels lets the editor use the same
+    high-accuracy variants as region OCR without losing highlight positions.
+    """
 
     name: str
     width: int
     height: int
     bgra_pixels: bytes
+    source_scale_x: float = 1.0
+    source_scale_y: float = 1.0
+    source_offset_x: float = 0.0
+    source_offset_y: float = 0.0
 
 
 class OcrPreprocessor:
@@ -59,16 +69,40 @@ class OcrPreprocessor:
 
         source = Image.frombytes("RGBA", (width, height), rgba_pixels, "raw", "RGBA")
         original = self._fit_to_limit(source)
-        variants = [self._to_variant("source", original)]
+        variants = [self._to_variant(
+            "source",
+            original,
+            source_scale_x=source.width / original.width,
+            source_scale_y=source.height / original.height,
+        )]
 
         if not japanese_variants:
             return variants
 
-        prepared = self._add_border(self._upscale_for_small_text(source))
-        variants.append(self._to_variant("padded", prepared))
+        scaled = self._upscale_for_small_text(source)
+        prepared = self._add_border(scaled)
+        source_scale_x = source.width / scaled.width
+        source_scale_y = source.height / scaled.height
+        source_offset_x = (prepared.width - scaled.width) / 2
+        source_offset_y = (prepared.height - scaled.height) / 2
+        variants.append(self._to_variant(
+            "padded",
+            prepared,
+            source_scale_x=source_scale_x,
+            source_scale_y=source_scale_y,
+            source_offset_x=source_offset_x,
+            source_offset_y=source_offset_y,
+        ))
 
         enhanced = self._enhance_for_text(prepared)
-        variants.append(self._to_variant("enhanced", enhanced))
+        variants.append(self._to_variant(
+            "enhanced",
+            enhanced,
+            source_scale_x=source_scale_x,
+            source_scale_y=source_scale_y,
+            source_offset_x=source_offset_x,
+            source_offset_y=source_offset_y,
+        ))
         return variants
 
     def _fit_to_limit(self, image: Image.Image) -> Image.Image:
@@ -143,11 +177,23 @@ class OcrPreprocessor:
         return grayscale.convert("RGBA")
 
     @staticmethod
-    def _to_variant(name: str, image: Image.Image) -> OcrImageVariant:
+    def _to_variant(
+        name: str,
+        image: Image.Image,
+        *,
+        source_scale_x: float = 1.0,
+        source_scale_y: float = 1.0,
+        source_offset_x: float = 0.0,
+        source_offset_y: float = 0.0,
+    ) -> OcrImageVariant:
         rgba = image.convert("RGBA")
         return OcrImageVariant(
             name=name,
             width=rgba.width,
             height=rgba.height,
             bgra_pixels=rgba.tobytes("raw", "BGRA"),
+            source_scale_x=source_scale_x,
+            source_scale_y=source_scale_y,
+            source_offset_x=source_offset_x,
+            source_offset_y=source_offset_y,
         )

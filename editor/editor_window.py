@@ -3,7 +3,9 @@ Main editor window for SnapEdit.
 Combines toolbar, canvas, and provides save/export functionality.
 """
 import os
+import re
 from datetime import datetime
+from pathlib import Path
 from PyQt6 import sip
 from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtGui import (
@@ -18,6 +20,7 @@ from editor.canvas import AnnotationCanvas, CanvasView
 from editor.gallery_dialog import GalleryDialog
 from settings.config import Config
 from ui_scaling import WindowScaler, screen_at_cursor
+from ocr.worker import OcrLayoutWorker
 from theme import (
     BASE, BORDER_SUBTLE, TEXT_MUTED, TEXT_SECONDARY, TYPE_BODY_PT,
 )
@@ -28,6 +31,27 @@ _FALLBACK_EDITOR_HEIGHT = 800
 _MIN_EDITOR_WIDTH = 640
 _MIN_EDITOR_HEIGHT = 480
 _EDITOR_SCREEN_RATIO = 0.8
+_FALLBACK_APP_VERSION = "1.0.2"
+
+
+def _read_app_version():
+    """Read the display version from the PyInstaller version resource."""
+    version_file = Path(__file__).resolve().parents[1] / "version.txt"
+    try:
+        version_resource = version_file.read_text(encoding="utf-8")
+    except OSError:
+        return _FALLBACK_APP_VERSION
+
+    match = re.search(
+        r"StringStruct\('ProductVersion',\s*'([^']+)'\)",
+        version_resource,
+    )
+    if not match:
+        return _FALLBACK_APP_VERSION
+    return match.group(1).removesuffix(".0")
+
+
+_APP_VERSION = _read_app_version()
 
 
 class EditorWindow(QMainWindow):
@@ -51,6 +75,9 @@ class EditorWindow(QMainWindow):
         self._text_color = QColor(config.get("text_color", "#FF0000"))
         self._text_bg_color = QColor(config.get("text_bg_color", "#FFFFFF"))
         self._pixmap = pixmap
+        self._ocr_layout_worker = None
+        self._ocr_generation = 0
+        self._ocr_rescan_pending = False
         self._recent_screenshots = (
             recent_screenshots if recent_screenshots is not None else []
         )
@@ -115,10 +142,6 @@ class EditorWindow(QMainWindow):
         ))
 
     def resizeEvent(self, event):
-        if hasattr(self, "_hint_label"):
-            self._hint_label.setVisible(
-                event.size().width() >= 900 * (self.property("uiScale") or 1.0)
-            )
         super().resizeEvent(event)
 
     def _setup_ui(self):
@@ -198,11 +221,10 @@ class EditorWindow(QMainWindow):
         zoom_layout.addWidget(fit_button)
         self._statusbar.addPermanentWidget(zoom_controls)
 
-        self._hint_label = QLabel(
-            "V Select   ·   Ctrl+wheel Zoom   ·   Ctrl+Z Undo   ·   Del Delete"
-        )
-        self._hint_label.setStyleSheet(f"color: {TEXT_MUTED};")
-        self._statusbar.addPermanentWidget(self._hint_label)
+        self._version_label = QLabel(f"Version {_APP_VERSION}")
+        self._version_label.setAccessibleName("Application version")
+        self._version_label.setStyleSheet(f"color: {TEXT_MUTED};")
+        self._statusbar.addPermanentWidget(self._version_label)
         self._view.zoom_changed.connect(self._on_zoom_changed)
 
     def showEvent(self, event):
@@ -213,6 +235,7 @@ class EditorWindow(QMainWindow):
 
     def load_capture(self, pixmap: QPixmap):
         """Supply the first capture to the unused, prebuilt editor."""
+        self._cancel_editor_ocr()
         self._pixmap = pixmap
         self._canvas.set_background(pixmap)
         self._size_label.setText(f"{pixmap.width()} × {pixmap.height()} px")
@@ -234,7 +257,6 @@ class EditorWindow(QMainWindow):
         # Only defaults for NEW annotations follow DPI. Existing image content
         # must remain unchanged when dragging the editor to another monitor.
         self._canvas.set_annotation_scale(scale, width, text_size, bubble_size)
-        self._hint_label.setVisible(self.width() >= 900 * scale)
 
     def _on_stroke_width_changed(self, width):
         self._logical_stroke_width = width / self._ui_scaler.scale
@@ -280,6 +302,7 @@ class EditorWindow(QMainWindow):
         # Tool shortcuts
         shortcuts = {
             'V': ToolType.SELECT,
+            'O': ToolType.OCR,
             'A': ToolType.ARROW,
             'L': ToolType.LINE,
             'R': ToolType.RECT,
@@ -314,7 +337,7 @@ class EditorWindow(QMainWindow):
         QShortcut(QKeySequence(Qt.Key.Key_Backspace), self).activated.connect(self._canvas.delete_selected)
 
     def _connect_signals(self):
-        self._toolbar.tool_changed.connect(self._canvas.set_tool)
+        self._toolbar.tool_changed.connect(self._on_tool_changed)
         self._toolbar.color_changed.connect(self._on_color_changed)
         self._toolbar.stroke_width_changed.connect(self._on_stroke_width_changed)
         self._toolbar.fill_changed.connect(self._on_fill_changed)
@@ -327,6 +350,7 @@ class EditorWindow(QMainWindow):
         self._toolbar.save_file_requested.connect(self._save_file)
         self._toolbar.copy_clipboard_requested.connect(self._copy_clipboard)
         self._toolbar.gallery_requested.connect(self._open_gallery)
+        self._canvas.ocr_selection_changed.connect(self._on_ocr_selection_changed)
         self._canvas.undo_stack.canUndoChanged.connect(
             lambda enabled: self._toolbar.set_command_state(
                 enabled, self._canvas.undo_stack.canRedo()
@@ -340,6 +364,112 @@ class EditorWindow(QMainWindow):
         self._toolbar.set_command_state(
             self._canvas.undo_stack.canUndo(), self._canvas.undo_stack.canRedo()
         )
+
+    def _on_tool_changed(self, tool: str):
+        """Apply a tool switch and start/clear the transient editor OCR mode."""
+        self._canvas.set_tool(tool)
+        if tool == ToolType.OCR:
+            self._start_editor_ocr()
+        else:
+            self._cancel_editor_ocr()
+
+    def _start_editor_ocr(self):
+        """Recognize the original screenshot and request word rectangles."""
+        if self._disposed or self._pixmap.isNull():
+            return
+        worker = self._ocr_layout_worker
+        if worker is not None and worker.isRunning():
+            # A fresh request is queued after an in-flight native OCR call
+            # returns. QThread interruption cannot abort that WinRT await.
+            self._ocr_rescan_pending = True
+            worker.requestInterruption()
+            self._toolbar.set_ocr_hint("Restarting text scan…")
+            self._statusbar.showMessage("Restarting Text OCR…", 3000)
+            return
+
+        self._ocr_rescan_pending = False
+        self._ocr_generation += 1
+        self._canvas.clear_ocr_overlay()
+        self._toolbar.set_ocr_hint("Reading text in this image…")
+        self._statusbar.showMessage("Reading text in image…")
+
+        worker = OcrLayoutWorker(
+            self._pixmap,
+            self,
+            language=self._config.get("ocr.language", "auto"),
+        )
+        worker.setProperty("ocrGeneration", self._ocr_generation)
+        worker.layout_ready.connect(self._on_editor_ocr_ready)
+        worker.failed.connect(self._on_editor_ocr_failed)
+        worker.finished.connect(self._on_editor_ocr_finished)
+        self._ocr_layout_worker = worker
+        worker.start()
+
+    def _cancel_editor_ocr(self):
+        """Ignore a pending OCR result and ask its worker to stop safely."""
+        self._ocr_generation += 1
+        self._ocr_rescan_pending = False
+        worker = self._ocr_layout_worker
+        if worker is not None and worker.isRunning():
+            worker.requestInterruption()
+
+    def _on_editor_ocr_ready(self, layout):
+        worker = self.sender()
+        if (
+            self._disposed
+            or worker is not self._ocr_layout_worker
+            or worker.property("ocrGeneration") != self._ocr_generation
+            or self._toolbar.current_tool != ToolType.OCR
+        ):
+            return
+        self._canvas.show_ocr_layout(layout)
+        word_count = self._canvas.ocr_word_count()
+        self._toolbar.set_ocr_hint(
+            f"{word_count} words found — drag across text, then press Ctrl+C"
+        )
+        self._statusbar.showMessage(
+            f"Text OCR found {word_count} words. Drag to select and copy.", 5000
+        )
+
+    def _on_editor_ocr_failed(self, message: str):
+        worker = self.sender()
+        if (
+            self._disposed
+            or worker is not self._ocr_layout_worker
+            or worker.property("ocrGeneration") != self._ocr_generation
+            or self._toolbar.current_tool != ToolType.OCR
+        ):
+            return
+        self._toolbar.set_ocr_hint("Couldn't read text — try a clearer image")
+        self._statusbar.showMessage(f"Text OCR failed: {message}", 7000)
+
+    def _on_editor_ocr_finished(self):
+        worker = self.sender()
+        if worker is not self._ocr_layout_worker:
+            return
+        self._ocr_layout_worker = None
+        if not sip.isdeleted(worker):
+            worker.deleteLater()
+        if (
+            self._ocr_rescan_pending
+            and not self._disposed
+            and self._toolbar.current_tool == ToolType.OCR
+        ):
+            self._ocr_rescan_pending = False
+            self._start_editor_ocr()
+
+    def _on_ocr_selection_changed(self, text: str):
+        if self._toolbar.current_tool != ToolType.OCR:
+            return
+        if text:
+            count = self._canvas._ocr_overlay.selected_word_count
+            self._toolbar.set_ocr_hint(
+                f"{count} words selected — press Ctrl+C to copy"
+            )
+        elif self._canvas.has_ocr_overlay():
+            self._toolbar.set_ocr_hint(
+                f"{self._canvas.ocr_word_count()} words found — drag across text, then press Ctrl+C"
+            )
 
     def _on_zoom_changed(self, value: float):
         self._zoom_label.setText(f"{round(value * 100)}%")
@@ -380,6 +510,16 @@ class EditorWindow(QMainWindow):
 
     def _copy_clipboard(self):
         """Copy the annotated screenshot to clipboard."""
+        if self._toolbar.current_tool == ToolType.OCR:
+            text = self._canvas.selected_ocr_text()
+            if text:
+                QApplication.clipboard().setText(text)
+                self._statusbar.showMessage("Copied selected text", 3000)
+            else:
+                self._statusbar.showMessage(
+                    "Drag across highlighted text before copying", 3000
+                )
+            return
         pixmap = self._canvas.export_to_pixmap()
         clipboard = QApplication.clipboard()
         clipboard.setPixmap(pixmap)
@@ -390,6 +530,16 @@ class EditorWindow(QMainWindow):
         if self._disposed:
             return
         self._disposed = True
+        self._cancel_editor_ocr()
+        worker = self._ocr_layout_worker
+        if worker is not None and worker.isRunning():
+            worker.wait(3000)
+            if worker.isRunning():
+                worker.terminate()
+                worker.wait(1000)
+        self._ocr_layout_worker = None
+        if worker is not None and not sip.isdeleted(worker):
+            worker.deleteLater()
         self._ui_scaler.dispose()
         for dialog in self.findChildren(QDialog):
             if not sip.isdeleted(dialog):
