@@ -2,11 +2,12 @@
 Canvas (QGraphicsScene) for the SnapEdit editor.
 Manages the background screenshot and all annotation items.
 """
+import math
 import weakref
 from PyQt6 import sip
 from PyQt6.QtCore import Qt, QRectF, QPointF, pyqtSignal, QEvent
 from PyQt6.QtGui import (
-    QPixmap, QColor, QPainter, QTransform, QUndoStack, QUndoCommand
+    QPixmap, QColor, QPainter, QPen, QTransform, QUndoStack, QUndoCommand
 )
 from PyQt6.QtWidgets import (
     QGraphicsScene, QGraphicsPixmapItem, QGraphicsView,
@@ -93,6 +94,10 @@ _POPUP_STYLESHEET = f"""
         border-color: {ACCENT};
     }}
 """
+
+
+_CANVAS_GRID_SPACING = 32
+_CANVAS_GRID_COLOR = QColor("#292929")
 
 
 class AddItemCommand(QUndoCommand):
@@ -541,6 +546,52 @@ class AnnotationCanvas(QGraphicsScene):
         self.addItem(self._background_item)
         self.setSceneRect(self._background_item.boundingRect())
 
+    def _image_rect(self) -> QRectF:
+        """Return the screenshot's exact scene bounds."""
+        if self._background_item is not None:
+            return self._background_item.sceneBoundingRect()
+        return self.sceneRect()
+
+    def is_inside_image(self, pos: QPointF) -> bool:
+        """Whether a scene point is inside the captured screenshot."""
+        return self._image_rect().contains(pos)
+
+    def clamp_to_image(self, pos: QPointF) -> QPointF:
+        """Clamp a scene point to the captured screenshot's nearest edge."""
+        rect = self._image_rect()
+        if rect.isEmpty():
+            return QPointF(pos)
+        return QPointF(
+            min(max(pos.x(), rect.left()), rect.right()),
+            min(max(pos.y(), rect.top()), rect.bottom()),
+        )
+
+    def constrain_item_position(self, item, position: QPointF) -> QPointF:
+        """Keep a movable annotation's visible bounds within the screenshot."""
+        image_rect = self._image_rect()
+        if image_rect.isEmpty():
+            return position
+
+        current_bounds = item.mapRectToScene(item.boundingRect())
+        proposed_bounds = current_bounds.translated(position - item.pos())
+        dx = 0.0
+        dy = 0.0
+        if proposed_bounds.width() <= image_rect.width():
+            if proposed_bounds.left() < image_rect.left():
+                dx = image_rect.left() - proposed_bounds.left()
+            elif proposed_bounds.right() > image_rect.right():
+                dx = image_rect.right() - proposed_bounds.right()
+        else:
+            dx = image_rect.center().x() - proposed_bounds.center().x()
+        if proposed_bounds.height() <= image_rect.height():
+            if proposed_bounds.top() < image_rect.top():
+                dy = image_rect.top() - proposed_bounds.top()
+            elif proposed_bounds.bottom() > image_rect.bottom():
+                dy = image_rect.bottom() - proposed_bounds.bottom()
+        else:
+            dy = image_rect.center().y() - proposed_bounds.center().y()
+        return QPointF(position.x() + dx, position.y() + dy)
+
     def set_tool(self, tool: str):
         """Set the current drawing tool."""
         self._current_tool = tool
@@ -678,6 +729,12 @@ class AnnotationCanvas(QGraphicsScene):
             super().mousePressEvent(event)
             return
 
+        # The grid is workspace chrome, not drawable space. New annotations
+        # can only start on the captured image.
+        if not self.is_inside_image(pos):
+            event.accept()
+            return
+
         if self._current_tool == ToolType.BUBBLE:
             self._add_bubble(pos)
             return
@@ -710,7 +767,7 @@ class AnnotationCanvas(QGraphicsScene):
             return
         if self._drawing and self._current_tool in (ToolType.ARROW, ToolType.LINE,
                                                       ToolType.RECT, ToolType.ELLIPSE):
-            pos = event.scenePos()
+            pos = self.clamp_to_image(event.scenePos())
             if self._current_draw_item is None:
                 self._current_draw_item = self._create_shape_item(self._draw_start, pos)
                 if self._current_draw_item:
@@ -726,6 +783,11 @@ class AnnotationCanvas(QGraphicsScene):
             return
         if self._drawing and self._current_draw_item is not None:
             self._drawing = False
+            self._update_shape_item(
+                self._current_draw_item,
+                self._draw_start,
+                self.clamp_to_image(event.scenePos()),
+            )
             # Remove and re-add via undo command
             self.removeItem(self._current_draw_item)
             cmd = AddItemCommand(self, self._current_draw_item, f"Add {self._current_tool}")
@@ -790,7 +852,14 @@ class AnnotationCanvas(QGraphicsScene):
         item = BubbleItem(number, self._pen_color, bubble_size=self._bubble_size)
         item.setScale(self._annotation_scale)
         radius = (self._bubble_size / 2.0) * self._annotation_scale
-        item.setPos(pos.x() - radius, pos.y() - radius)
+        diameter = self._bubble_size * self._annotation_scale
+        image_rect = self._image_rect()
+        max_x = max(image_rect.left(), image_rect.right() - diameter)
+        max_y = max(image_rect.top(), image_rect.bottom() - diameter)
+        item.setPos(
+            min(max(pos.x() - radius, image_rect.left()), max_x),
+            min(max(pos.y() - radius, image_rect.top()), max_y),
+        )
         cmd = AddBubbleCommand(self, item, number)
         self._undo_stack.push(cmd)
         self.item_added.emit()
@@ -799,7 +868,14 @@ class AnnotationCanvas(QGraphicsScene):
         """Add a text item at the given position."""
         from editor.items.text_item import TextItem
         item = TextItem(self._text_color, self._text_size, self._text_bg_color)
-        item.setPos(pos)
+        image_rect = self._image_rect()
+        text_bounds = item.boundingRect()
+        max_x = max(image_rect.left(), image_rect.right() - text_bounds.width())
+        max_y = max(image_rect.top(), image_rect.bottom() - text_bounds.height())
+        item.setPos(
+            min(max(pos.x(), image_rect.left()), max_x),
+            min(max(pos.y(), image_rect.top()), max_y),
+        )
         cmd = AddItemCommand(self, item, "Add text")
         self._undo_stack.push(cmd)
         self.item_added.emit()
@@ -886,6 +962,7 @@ class CanvasView(QGraphicsView):
         self.setResizeAnchor(QGraphicsView.ViewportAnchor.AnchorUnderMouse)
         self.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
         self.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        self.setBackgroundBrush(QColor(CONTENT))
         self._zoom = 1.0
         self._grab_mode = False
         self._prev_drag_mode = QGraphicsView.DragMode.NoDrag
@@ -913,6 +990,38 @@ class CanvasView(QGraphicsView):
                 height: 0px;
             }
         """ % (CONTENT, BASE, BORDER, HOVER))
+
+    def drawBackground(self, painter, rect):
+        """Draw a subtle, viewport-fixed grid around the screenshot canvas."""
+        super().drawBackground(painter, rect)
+
+        # Paint in viewport coordinates so the grid remains a calm, readable
+        # workspace cue while the image itself is zoomed or panned. The
+        # screenshot is drawn later by the scene, so the grid never appears
+        # over the image or in exported files.
+        view_rect = painter.worldTransform().mapRect(rect).intersected(
+            QRectF(self.viewport().rect())
+        )
+        if view_rect.isEmpty():
+            return
+
+        painter.save()
+        painter.resetTransform()
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing, False)
+        pen = QPen(_CANVAS_GRID_COLOR)
+        pen.setCosmetic(True)
+        painter.setPen(pen)
+
+        left = math.floor(view_rect.left() / _CANVAS_GRID_SPACING) * _CANVAS_GRID_SPACING
+        top = math.floor(view_rect.top() / _CANVAS_GRID_SPACING) * _CANVAS_GRID_SPACING
+        right = math.ceil(view_rect.right())
+        bottom = math.ceil(view_rect.bottom())
+
+        for x in range(left, right + 1, _CANVAS_GRID_SPACING):
+            painter.drawLine(x, math.floor(view_rect.top()), x, bottom)
+        for y in range(top, bottom + 1, _CANVAS_GRID_SPACING):
+            painter.drawLine(math.floor(view_rect.left()), y, right, y)
+        painter.restore()
 
     def set_tool(self, tool: str):
         """Switch between grab/pan mode and normal mode."""

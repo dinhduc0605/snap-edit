@@ -16,7 +16,7 @@ from PyQt6.QtWidgets import (
 
 from theme import (
     ACCENT, ACCENT_SUBTLE, BASE, BORDER,
-    BORDER_SUBTLE, CONTROL_RADIUS, HOVER, PRESSED, SURFACE,
+    BORDER_SUBTLE, CONTROL_RADIUS, EDITOR_CONTENT_PADDING, HOVER, PRESSED, SURFACE,
     SURFACE_ALT, TEXT_PRIMARY, TEXT_SECONDARY, TEXT_MUTED, TYPE_BODY_PT,
     TYPE_CAPTION_PT, OVERLAY_RADIUS,
 )
@@ -292,7 +292,8 @@ class Toolbar(QWidget):
                   initial_text_bg_color: QColor | None,
                   initial_fill: bool):
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(12, 8, 12, 8)
+        layout.setContentsMargins(EDITOR_CONTENT_PADDING, 8,
+                                  EDITOR_CONTENT_PADDING, 8)
         layout.setSpacing(6)
 
         command_row = QHBoxLayout()

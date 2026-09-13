@@ -22,7 +22,8 @@ from settings.config import Config
 from ui_scaling import WindowScaler, screen_at_cursor
 from ocr.worker import OcrLayoutWorker
 from theme import (
-    BASE, BORDER_SUBTLE, TEXT_MUTED, TEXT_SECONDARY, TYPE_BODY_PT,
+    BASE, BORDER_SUBTLE, EDITOR_CONTENT_PADDING, TEXT_MUTED, TEXT_SECONDARY,
+    TYPE_BODY_PT,
 )
 
 
@@ -173,11 +174,14 @@ class EditorWindow(QMainWindow):
         self._canvas.set_text_bg_color(self._text_bg_color)
         self._canvas.set_fill_enabled(bool(self._config.get("fill_shapes", False)))
         self._view = CanvasView(self._canvas)
-        # Keep a visible gutter around the complete canvas region so the
-        # screenshot does not visually merge into the editor's chrome.
+        # Use the toolbar's content gutter so their left/right edges align.
+        # It also keeps the screenshot from visually merging with the chrome.
         self._canvas_container = QWidget()
         canvas_layout = QVBoxLayout(self._canvas_container)
-        canvas_layout.setContentsMargins(16, 16, 16, 16)
+        canvas_layout.setContentsMargins(
+            EDITOR_CONTENT_PADDING, EDITOR_CONTENT_PADDING,
+            EDITOR_CONTENT_PADDING, EDITOR_CONTENT_PADDING,
+        )
         canvas_layout.setSpacing(0)
         canvas_layout.addWidget(self._view)
         layout.addWidget(self._canvas_container)

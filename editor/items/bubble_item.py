@@ -16,6 +16,7 @@ from PyQt6.QtWidgets import (
     QStyleOptionGraphicsItem,
     QWidget,
 )
+from .base_item import constrain_item_position_change
 
 
 # Visual constants
@@ -64,6 +65,9 @@ class BubbleItem(QGraphicsItem):
         # Flags – movable and selectable, NOT resizable
         self.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIsMovable, True)
         self.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIsSelectable, True)
+        self.setFlag(
+            QGraphicsItem.GraphicsItemFlag.ItemSendsGeometryChanges, True
+        )
 
         # Drop shadow effect
         shadow = QGraphicsDropShadowEffect()
@@ -185,3 +189,8 @@ class BubbleItem(QGraphicsItem):
         painter.translate(bubble_center - text_bounds.center())
         painter.fillPath(text_path, QBrush(_TEXT_COLOR))
         painter.restore()
+
+    def itemChange(self, change, value):
+        return super().itemChange(
+            change, constrain_item_position_change(self, change, value)
+        )

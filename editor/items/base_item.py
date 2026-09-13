@@ -39,6 +39,28 @@ MIN_ITEM_SIZE: float = 10.0
 HANDLE_HIT_MARGIN: float = 5.0
 
 
+def constrained_event_pos(item: QGraphicsItem, event: QGraphicsSceneMouseEvent) -> QPointF:
+    """Return an item-local pointer position constrained to the screenshot."""
+    scene = item.scene()
+    clamp = getattr(scene, "clamp_to_image", None)
+    if callable(clamp):
+        return item.mapFromScene(clamp(event.scenePos()))
+    return event.pos()
+
+
+def constrain_item_position_change(
+    item: QGraphicsItem, change: QGraphicsItem.GraphicsItemChange, value,
+):
+    """Keep movable annotations inside the image when their position changes."""
+    if change != QGraphicsItem.GraphicsItemChange.ItemPositionChange:
+        return value
+    scene = item.scene()
+    clamp = getattr(scene, "constrain_item_position", None)
+    if callable(clamp):
+        return clamp(item, QPointF(value))
+    return value
+
+
 class ResizableItem:
     """
     Mixin class that adds resize-handle behaviour to QGraphicsItem subclasses.
@@ -284,9 +306,14 @@ class ResizableItem:
             self._active_handle,
             self._drag_rect_origin,
             self._drag_origin,
-            event.pos(),
+            constrained_event_pos(self, event),
         )
         return new_rect
+
+    def itemChange(self, change, value):
+        return super().itemChange(
+            change, constrain_item_position_change(self, change, value)
+        )
 
     def resizable_mouse_release(
         self, event: QGraphicsSceneMouseEvent,

@@ -16,6 +16,7 @@ from PyQt6.QtWidgets import (
     QStyleOptionGraphicsItem,
     QWidget,
 )
+from .base_item import constrain_item_position_change
 
 
 # Default visual constants
@@ -64,6 +65,9 @@ class TextItem(QGraphicsTextItem):
         # Flags
         self.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIsMovable, True)
         self.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIsSelectable, True)
+        self.setFlag(
+            QGraphicsItem.GraphicsItemFlag.ItemSendsGeometryChanges, True
+        )
 
         # Font
         font = QFont(_DEFAULT_FONT_FAMILY, self._font_size)
@@ -201,6 +205,11 @@ class TextItem(QGraphicsTextItem):
         cursor = self.textCursor()
         cursor.clearSelection()
         self.setTextCursor(cursor)
+
+    def itemChange(self, change, value):
+        return super().itemChange(
+            change, constrain_item_position_change(self, change, value)
+        )
 
     def focusOutEvent(self, event) -> None:
         """Exit edit mode when focus is lost."""

@@ -16,6 +16,7 @@ from PyQt6.QtWidgets import (
     QStyleOptionGraphicsItem,
     QWidget,
 )
+from .base_item import constrained_event_pos, constrain_item_position_change
 
 
 # Handle visual constants
@@ -220,19 +221,25 @@ class LineItem(QGraphicsPathItem):
         super().mousePressEvent(event)
 
     def mouseMoveEvent(self, event: QGraphicsSceneMouseEvent) -> None:
+        pos = constrained_event_pos(self, event)
         if self._dragging_handle == 0:
             self.prepareGeometryChange()
-            self._start_point = event.pos()
+            self._start_point = pos
             self._update_path()
             self.update()
             return
         if self._dragging_handle == 1:
             self.prepareGeometryChange()
-            self._end_point = event.pos()
+            self._end_point = pos
             self._update_path()
             self.update()
             return
         super().mouseMoveEvent(event)
+
+    def itemChange(self, change, value):
+        return super().itemChange(
+            change, constrain_item_position_change(self, change, value)
+        )
 
     def mouseReleaseEvent(self, event: QGraphicsSceneMouseEvent) -> None:
         if self._dragging_handle != -1:

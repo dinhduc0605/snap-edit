@@ -28,6 +28,7 @@ from editor.items.rect_item import RectItem
 from editor.items.text_item import TextItem
 from settings.config import Config, DEFAULT_CONFIG
 from settings.settings_dialog import SettingsDialog
+from theme import EDITOR_CONTENT_PADDING
 from ui_scaling import prepare_ui_fonts, screen_scale, scaled_stylesheet
 
 
@@ -84,13 +85,28 @@ class DpiCaptureTests(unittest.TestCase):
         margins = editor._canvas_container.layout().contentsMargins()
         self.assertEqual(
             (margins.left(), margins.top(), margins.right(), margins.bottom()),
-            (16, 16, 16, 16),
+            (EDITOR_CONTENT_PADDING,) * 4,
         )
         editor._ui_scaler.apply(2, resize=False)
         margins = editor._canvas_container.layout().contentsMargins()
         self.assertEqual(
             (margins.left(), margins.top(), margins.right(), margins.bottom()),
-            (32, 32, 32, 32),
+            (EDITOR_CONTENT_PADDING * 2,) * 4,
+        )
+
+    def test_annotation_positions_are_constrained_to_the_captured_image(self):
+        canvas = self.editor()._canvas
+        shape = RectItem(QRectF(10, 10, 100, 80))
+        canvas.addItem(shape)
+
+        shape.setPos(5000, 5000)
+        image_rect = canvas.sceneRect()
+        bounds = shape.sceneBoundingRect()
+        self.assertLessEqual(bounds.right(), image_rect.right())
+        self.assertLessEqual(bounds.bottom(), image_rect.bottom())
+        self.assertEqual(
+            canvas.clamp_to_image(QPointF(-100, 9999)),
+            QPointF(image_rect.left(), image_rect.bottom()),
         )
 
     def test_monitor_transition_does_not_edit_selected_annotations(self):
