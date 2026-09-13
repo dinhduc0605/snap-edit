@@ -14,7 +14,7 @@ from unittest.mock import patch
 
 import main
 from PyQt6 import sip
-from PyQt6.QtCore import QEvent, QPoint, QPointF, QRectF, QTimer, Qt
+from PyQt6.QtCore import QEvent, QPoint, QPointF, QRectF, QTimer
 from PyQt6.QtGui import QColor, QPixmap
 from PyQt6.QtWidgets import QApplication, QDialog, QWidget
 

@@ -7,7 +7,6 @@ from tempfile import NamedTemporaryFile
 
 import mss
 import numpy as np
-from PIL import Image
 from pynput.keyboard import Key, Listener
 from PyQt6.QtCore import QObject, QRect, Qt, QThread, pyqtSignal
 from PyQt6.QtGui import QPixmap
@@ -48,7 +47,6 @@ class ScrollCaptureWorker(QThread):
     progress = pyqtSignal(int, int)
     completed = pyqtSignal(str, str)
     failed = pyqtSignal(str)
-    cancelled = pyqtSignal()
 
     def __init__(self, rect: QRect, parent=None):
         super().__init__(parent)
@@ -112,12 +110,10 @@ class ScrollCaptureWorker(QThread):
     def run(self):
         store = None
         target = None
-        warning = ""
         previous = None
         margins = None
         try:
             if self._discard:
-                self.cancelled.emit()
                 return
             target = ScrollTarget(self.rect)
             target.activate()
@@ -146,7 +142,7 @@ class ScrollCaptureWorker(QThread):
                     unchanged = 0
                     if margins is None:
                         margins = (match.top, match.bottom)
-                    top, bottom = margins
+                    _, bottom = margins
                     content_end = len(previous) - bottom
                     if not initialized:
                         store.append(previous[:content_end])
@@ -157,7 +153,6 @@ class ScrollCaptureWorker(QThread):
                     self.progress.emit(frames, store.height + bottom)
 
                 if self._discard:
-                    self.cancelled.emit()
                     return
                 if not initialized:
                     store.append(previous)
@@ -167,13 +162,11 @@ class ScrollCaptureWorker(QThread):
                 if self._discard:
                     os.unlink(self._output_path)
                     self._output_path = None
-                    self.cancelled.emit()
                     return
-                self.completed.emit(self._output_path, warning)
+                self.completed.emit(self._output_path, "")
                 self._output_path = None
         except (StitchError, RuntimeError, OSError) as exc:
             if self._discard:
-                self.cancelled.emit()
                 return
             warning = str(exc)
             if store is not None and previous is not None:
@@ -228,10 +221,8 @@ class ScrollControl(QFrame):
         root.addWidget(title)
         self.status = QLabel("Starting…")
         root.addWidget(self.status)
-        self.pointer_hint = QLabel("Pointer is locked while scrolling")
-        root.addWidget(self.pointer_hint)
-        self.hint = QLabel("Press Enter to finish · Esc to cancel")
-        root.addWidget(self.hint)
+        root.addWidget(QLabel("Pointer is locked while scrolling"))
+        root.addWidget(QLabel("Press Enter to finish · Esc to cancel"))
         self._scaler = WindowScaler(self, resize_window=False)
         self._listener = None
 
@@ -295,7 +286,6 @@ class ScrollCaptureSession(QObject):
         self.worker.progress.connect(self.control.set_progress)
         self.worker.completed.connect(self._completed)
         self.worker.failed.connect(self._failed)
-        self.worker.cancelled.connect(self._cancelled)
         self.worker.finished.connect(self._thread_finished)
 
     def start(self):
@@ -326,16 +316,10 @@ class ScrollCaptureSession(QObject):
     def _failed(self, message):
         self.message.emit(message)
 
-    def _cancelled(self):
-        pass
-
     def _thread_finished(self):
         self.control.close()
         self.control.deleteLater()
         self.finished.emit()
-
-    def wait(self, milliseconds=3000):
-        return self.worker.wait(milliseconds)
 
     def dispose(self):
         self.cancel()

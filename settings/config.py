@@ -4,7 +4,6 @@ Reads and writes settings from/to a JSON config file.
 """
 import copy
 import json
-import os
 from pathlib import Path
 
 

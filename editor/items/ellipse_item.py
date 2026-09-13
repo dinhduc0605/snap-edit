@@ -5,7 +5,7 @@ Draws an ellipse inscribed in a configurable bounding rectangle,
 with optional semi-transparent fill and 8 resize handles.
 """
 
-from PyQt6.QtCore import Qt, QRectF, QPointF
+from PyQt6.QtCore import Qt, QRectF
 from PyQt6.QtGui import QPen, QBrush, QColor, QPainter, QPainterPath
 from PyQt6.QtWidgets import (
     QGraphicsEllipseItem,

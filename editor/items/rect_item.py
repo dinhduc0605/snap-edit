@@ -5,7 +5,7 @@ Draws a rectangle with configurable stroke colour, width, and optional
 semi-transparent fill.  Supports 8 resize handles via ResizableItem.
 """
 
-from PyQt6.QtCore import Qt, QRectF, QPointF
+from PyQt6.QtCore import Qt, QRectF
 from PyQt6.QtGui import QPen, QBrush, QColor, QPainter, QPainterPath
 from PyQt6.QtWidgets import (
     QGraphicsRectItem,

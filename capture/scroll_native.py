@@ -1,6 +1,6 @@
 """Small, typed Win32 adapter for one foreground scrolling target."""
-import ctypes
 import atexit
+import ctypes
 import time
 from ctypes import wintypes as w
 
