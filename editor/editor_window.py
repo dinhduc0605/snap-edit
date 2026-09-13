@@ -289,7 +289,12 @@ class EditorWindow(QMainWindow):
     def _on_text_bg_color_changed(self, color):
         self._text_bg_color = QColor(color)
         self._canvas.set_text_bg_color(color)
-        self._persist_editor_property("text_bg_color", color.name())
+        name_format = (
+            QColor.NameFormat.HexArgb
+            if color.alpha() < 255
+            else QColor.NameFormat.HexRgb
+        )
+        self._persist_editor_property("text_bg_color", color.name(name_format))
 
     def _on_fill_changed(self, enabled):
         self._canvas.set_fill_enabled(enabled)

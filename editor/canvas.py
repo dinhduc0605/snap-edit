@@ -15,7 +15,7 @@ from PyQt6.QtWidgets import (
     QWidget, QHBoxLayout, QLabel, QToolButton,
     QDialog, QApplication, QVBoxLayout, QFrame
 )
-from ui_widgets import BasicColorDialog, FluentSpinBox
+from ui_widgets import BasicColorDialog, FluentSpinBox, TransparencyPreviewButton
 from ui_scaling import WindowScaler
 from editor.toolbar import ToolType
 from theme import (
@@ -234,18 +234,20 @@ class TextSettingsPopup(_ItemSettingsPopup):
         layout.addWidget(_make_row("Text color", tc_btn))
 
         # --- Background color row ---
-        bg_btn = QToolButton()
+        bg_btn = TransparencyPreviewButton()
         bg_btn.setFixedSize(96, 32)
-        bg_btn.setStyleSheet(f"background: {_rgba_css(item.bg_color)};")
         bg_btn.setToolTip("Pick background color")
         bg_btn.setAccessibleName("Text background color")
+        def _show_bg_color(color):
+            bg_btn.set_color_preview(color)
+        _show_bg_color(item.bg_color)
         def _pick_bg_color():
             color = BasicColorDialog.get_color(
-                item.bg_color, self, "Background color"
+                item.bg_color, self, "Background color", allow_transparent=True
             )
             if color.isValid():
                 item.set_bg_color(color)
-                bg_btn.setStyleSheet(f"background: {_rgba_css(color)};")
+                _show_bg_color(color)
         bg_btn.clicked.connect(_pick_bg_color)
         layout.addWidget(_make_row("Background", bg_btn))
 
@@ -767,7 +769,11 @@ class AnnotationCanvas(QGraphicsScene):
             return
         if self._drawing and self._current_tool in (ToolType.ARROW, ToolType.LINE,
                                                       ToolType.RECT, ToolType.ELLIPSE):
-            pos = self.clamp_to_image(event.scenePos())
+            pos = self._constrain_draw_endpoint(
+                self._draw_start,
+                self.clamp_to_image(event.scenePos()),
+                bool(event.modifiers() & Qt.KeyboardModifier.ShiftModifier),
+            )
             if self._current_draw_item is None:
                 self._current_draw_item = self._create_shape_item(self._draw_start, pos)
                 if self._current_draw_item:
@@ -786,7 +792,11 @@ class AnnotationCanvas(QGraphicsScene):
             self._update_shape_item(
                 self._current_draw_item,
                 self._draw_start,
-                self.clamp_to_image(event.scenePos()),
+                self._constrain_draw_endpoint(
+                    self._draw_start,
+                    self.clamp_to_image(event.scenePos()),
+                    bool(event.modifiers() & Qt.KeyboardModifier.ShiftModifier),
+                ),
             )
             # Remove and re-add via undo command
             self.removeItem(self._current_draw_item)
@@ -844,6 +854,45 @@ class AnnotationCanvas(QGraphicsScene):
             item.setRect(QRectF(start, end).normalized())
         elif isinstance(item, (LineItem, ArrowItem)):
             item.set_endpoints(start, end)
+
+    def _constrain_draw_endpoint(
+        self, start: QPointF, end: QPointF, shift_pressed: bool
+    ) -> QPointF:
+        """Apply the standard Shift constraint while a new shape is drawn."""
+        if not shift_pressed:
+            return QPointF(end)
+
+        dx = end.x() - start.x()
+        dy = end.y() - start.y()
+        if self._current_tool == ToolType.LINE:
+            if abs(dx) >= abs(dy):
+                return QPointF(end.x(), start.y())
+            return QPointF(start.x(), end.y())
+
+        if self._current_tool not in (ToolType.RECT, ToolType.ELLIPSE):
+            return QPointF(end)
+
+        side = max(abs(dx), abs(dy))
+        if side == 0:
+            return QPointF(end)
+        horizontal_direction = 1 if dx > 0 or (dx == 0 and dy >= 0) else -1
+        vertical_direction = 1 if dy > 0 or (dy == 0 and dx >= 0) else -1
+        image_rect = self._image_rect()
+        max_horizontal = (
+            image_rect.right() - start.x()
+            if horizontal_direction > 0
+            else start.x() - image_rect.left()
+        )
+        max_vertical = (
+            image_rect.bottom() - start.y()
+            if vertical_direction > 0
+            else start.y() - image_rect.top()
+        )
+        side = min(side, max_horizontal, max_vertical)
+        return QPointF(
+            start.x() + horizontal_direction * side,
+            start.y() + vertical_direction * side,
+        )
 
     def _add_bubble(self, pos: QPointF):
         """Add a numbered bubble at the given position."""

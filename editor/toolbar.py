@@ -129,9 +129,13 @@ class ColorButton(QToolButton):
 
     color_changed = pyqtSignal(QColor)
 
-    def __init__(self, initial_color: QColor = QColor("#FF3B30"), parent=None):
+    def __init__(self, initial_color: QColor = QColor("#FF3B30"), parent=None,
+                 *, dialog_title: str = "Stroke color",
+                 allow_transparent: bool = False):
         super().__init__(parent)
         self._color = initial_color
+        self._dialog_title = dialog_title
+        self._allow_transparent = allow_transparent
         self.setFixedSize(32, 32)
         self.setCursor(Qt.CursorShape.PointingHandCursor)
         self.clicked.connect(self._pick_color)
@@ -146,15 +150,34 @@ class ColorButton(QToolButton):
         painter = QPainter(pixmap)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
         painter.scale(scale, scale)
-        painter.setBrush(self._color)
-        painter.setPen(Qt.PenStyle.NoPen)
-        painter.drawRoundedRect(0, 0, 24, 24, 4, 4)
+        if self._color.alpha() == 0:
+            painter.setPen(Qt.PenStyle.NoPen)
+            for y in range(0, 24, 6):
+                for x in range(0, 24, 6):
+                    color = (
+                        QColor("#D0D0D0")
+                        if (x + y) // 6 % 2
+                        else QColor("#707070")
+                    )
+                    painter.fillRect(x, y, 6, 6, color)
+            painter.setPen(QPen(QColor(BORDER), 1))
+            painter.setBrush(Qt.BrushStyle.NoBrush)
+            painter.drawRoundedRect(0, 0, 23, 23, 4, 4)
+        else:
+            painter.setBrush(self._color)
+            painter.setPen(Qt.PenStyle.NoPen)
+            painter.drawRoundedRect(0, 0, 24, 24, 4, 4)
         painter.end()
         self.setIcon(QIcon(pixmap))
         self.setIconSize(QSize(size, size))
 
     def _pick_color(self):
-        color = BasicColorDialog.get_color(self._color, self, "Stroke color")
+        color = BasicColorDialog.get_color(
+            self._color,
+            self,
+            self._dialog_title,
+            allow_transparent=self._allow_transparent,
+        )
         if color.isValid():
             self._color = color
             self._update_icon()
@@ -344,7 +367,9 @@ class Toolbar(QWidget):
         text_layout.addWidget(self._text_color_btn)
 
         self._text_bg_btn = ColorButton(
-            initial_text_bg_color or QColor("#FFFFFF")
+            initial_text_bg_color or QColor("#FFFFFF"),
+            dialog_title="Background color",
+            allow_transparent=True,
         )
         self._text_bg_btn.setToolTip("Text Background Color")
         self._text_bg_btn.setAccessibleName("Text background color")

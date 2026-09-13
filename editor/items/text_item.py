@@ -26,6 +26,7 @@ _DEFAULT_TEXT_COLOR = QColor("#FF0000")
 _DEFAULT_BG_COLOR = QColor(255, 255, 255, 180)
 _PLACEHOLDER = "Type here..."
 _BG_BORDER_COLOR = QColor(200, 200, 200, 120)
+_TEXT_PADDING_RATIO = 0.35
 
 
 class TextItem(QGraphicsTextItem):
@@ -76,6 +77,7 @@ class TextItem(QGraphicsTextItem):
         font.setPixelSize(self._font_size)
         font.setBold(True)
         self.setFont(font)
+        self.document().setDocumentMargin(self._text_padding())
         self.setDefaultTextColor(self._text_color)
 
         # Start with placeholder
@@ -101,16 +103,26 @@ class TextItem(QGraphicsTextItem):
     def bg_color(self) -> QColor:
         return self._bg_color
 
+    @property
+    def text_padding(self) -> float:
+        return self._text_padding()
+
+    def _text_padding(self) -> float:
+        """Keep whitespace around the text proportional to its pixel size."""
+        return self._font_size * _TEXT_PADDING_RATIO
+
     # ------------------------------------------------------------------
     # Public API
     # ------------------------------------------------------------------
 
     def set_font_size(self, size: int) -> None:
         """Change the font size in image pixels."""
+        self.prepareGeometryChange()
         self._font_size = max(6, size)
         font = self.font()
         font.setPixelSize(self._font_size)
         self.setFont(font)
+        self.document().setDocumentMargin(self._text_padding())
         self.update()
 
     def set_text_color(self, color: QColor) -> None:
@@ -168,10 +180,9 @@ class TextItem(QGraphicsTextItem):
     # ------------------------------------------------------------------
 
     def boundingRect(self) -> QRectF:
-        """Slightly expanded rect to include the background padding."""
+        """Include the background border around the document padding."""
         r = super().boundingRect()
-        padding = 4.0
-        return r.adjusted(-padding, -padding, padding, padding)
+        return r.adjusted(-2.0, -2.0, 2.0, 2.0)
 
     def paint(
         self,
@@ -183,10 +194,11 @@ class TextItem(QGraphicsTextItem):
         painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
 
         # --- Background ---
-        bg_rect = super().boundingRect().adjusted(-2, -2, 2, 2)
-        painter.setPen(QPen(_BG_BORDER_COLOR, 1.0, Qt.PenStyle.SolidLine))
-        painter.setBrush(QBrush(self._bg_color))
-        painter.drawRect(bg_rect)
+        if self._bg_color.alpha() > 0:
+            bg_rect = super().boundingRect().adjusted(-1, -1, 1, 1)
+            painter.setPen(QPen(_BG_BORDER_COLOR, 1.0, Qt.PenStyle.SolidLine))
+            painter.setBrush(QBrush(self._bg_color))
+            painter.drawRect(bg_rect)
 
         # --- Text ---
         super().paint(painter, option, widget)

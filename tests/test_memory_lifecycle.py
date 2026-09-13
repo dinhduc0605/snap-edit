@@ -6,6 +6,8 @@ import os
 os.environ["QT_QPA_PLATFORM"] = "offscreen"
 
 import gc
+from pathlib import Path
+from tempfile import TemporaryDirectory
 import unittest
 import weakref
 from copy import deepcopy
@@ -225,6 +227,20 @@ class MemoryLifecycleTests(unittest.TestCase):
         self.assertEqual(gallery._recent_list.count(), 0)
         self.assertTrue(gallery.selected_pixmap.isNull())
         self.assertFalse(selected.isNull())
+
+    def test_gallery_open_folder_button_creates_and_opens_save_directory(self):
+        with TemporaryDirectory() as temporary:
+            save_directory = Path(temporary) / "saved-images"
+            gallery = GalleryDialog([], str(save_directory))
+            self.windows.append(gallery)
+            with patch(
+                "editor.gallery_dialog.QDesktopServices.openUrl", return_value=True
+            ) as open_url:
+                gallery._open_folder_button.click()
+
+            self.assertTrue(save_directory.is_dir())
+            opened_url = open_url.call_args.args[0]
+            self.assertEqual(Path(opened_url.toLocalFile()), save_directory.resolve())
 
     def test_settings_completion_disposes_prepared_editor(self):
         prepared = EditorWindow(self.image(), self.config)

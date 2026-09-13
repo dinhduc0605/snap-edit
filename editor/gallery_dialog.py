@@ -2,11 +2,11 @@
 
 from pathlib import Path
 
-from PyQt6.QtCore import Qt, QSize
-from PyQt6.QtGui import QIcon, QImageReader, QPixmap
+from PyQt6.QtCore import Qt, QSize, QUrl
+from PyQt6.QtGui import QDesktopServices, QIcon, QImageReader, QPixmap
 from PyQt6.QtWidgets import (
-    QDialog, QFrame, QLabel, QListView, QListWidget, QListWidgetItem,
-    QVBoxLayout,
+    QDialog, QFrame, QHBoxLayout, QLabel, QListView, QListWidget,
+    QListWidgetItem, QMessageBox, QPushButton, QVBoxLayout,
 )
 
 from theme import (
@@ -41,6 +41,16 @@ QLabel#sectionTitle {{
     color: {TEXT_SECONDARY};
     font-size: {TYPE_BODY_PT}pt;
     font-weight: 600;
+}}
+QPushButton#openFolderButton {{
+    background: {SURFACE_ALT};
+    color: {TEXT_PRIMARY};
+    border: 1px solid {BORDER};
+    border-radius: {CONTROL_RADIUS}px;
+    padding: 5px 12px;
+}}
+QPushButton#openFolderButton:hover {{
+    background: {HOVER};
 }}
 QFrame#sectionCard {{
     background: {SURFACE};
@@ -120,7 +130,9 @@ class GalleryDialog(QDialog):
         )
         root.addWidget(recent_card)
 
-        saved_card, self._saved_list = self._create_section("Saved images")
+        saved_card, self._saved_list = self._create_section(
+            "Saved images", show_open_folder=True
+        )
         saved_card.setToolTip(str(self._save_directory))
         root.addWidget(saved_card, 1)
 
@@ -160,7 +172,9 @@ class GalleryDialog(QDialog):
     def selected_pixmap(self) -> QPixmap:
         return self._selected_pixmap
 
-    def _create_section(self, title_text: str, fixed_height=None):
+    def _create_section(
+        self, title_text: str, fixed_height=None, show_open_folder=False
+    ):
         card = QFrame()
         card.setObjectName("sectionCard")
         layout = QVBoxLayout(card)
@@ -170,7 +184,17 @@ class GalleryDialog(QDialog):
         title = QLabel(title_text)
         title.setObjectName("sectionTitle")
         title.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
-        layout.addWidget(title)
+        header = QHBoxLayout()
+        header.setContentsMargins(0, 0, 0, 0)
+        header.addWidget(title)
+        header.addStretch()
+        if show_open_folder:
+            self._open_folder_button = QPushButton("Open folder")
+            self._open_folder_button.setObjectName("openFolderButton")
+            self._open_folder_button.setToolTip(str(self._save_directory))
+            self._open_folder_button.clicked.connect(self._open_save_folder)
+            header.addWidget(self._open_folder_button)
+        layout.addLayout(header)
 
         image_list = QListWidget()
         image_list.setViewMode(QListView.ViewMode.IconMode)
@@ -189,6 +213,20 @@ class GalleryDialog(QDialog):
             )
         layout.addWidget(image_list, 1)
         return card, image_list
+
+    def _open_save_folder(self):
+        try:
+            self._save_directory.mkdir(parents=True, exist_ok=True)
+            url = QUrl.fromLocalFile(str(self._save_directory.resolve()))
+            if QDesktopServices.openUrl(url):
+                return
+        except OSError:
+            pass
+        QMessageBox.warning(
+            self,
+            "SnapEdit",
+            f"Could not open the saved images folder:\n{self._save_directory}",
+        )
 
     def _populate_recent(self):
         if not self._recent_screenshots:

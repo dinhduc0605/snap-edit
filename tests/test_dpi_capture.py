@@ -14,7 +14,7 @@ import main  # Set the same physical-coordinate/DPI policy as the application.
 from PyQt6 import sip
 from PyQt6.QtCore import QEvent, QPoint, QPointF, QRect, QRectF, QSize, Qt
 from PyQt6.QtGui import QColor, QFont, QMouseEvent, QPixmap
-from PyQt6.QtWidgets import QApplication
+from PyQt6.QtWidgets import QApplication, QToolButton
 from PyQt6.QtTest import QTest
 
 from capture.region import RegionSelector
@@ -30,6 +30,7 @@ from settings.config import Config, DEFAULT_CONFIG
 from settings.settings_dialog import SettingsDialog
 from theme import EDITOR_CONTENT_PADDING
 from ui_scaling import prepare_ui_fonts, screen_scale, scaled_stylesheet
+from ui_widgets import BasicColorDialog, TransparencyPreviewButton
 
 
 class DpiCaptureTests(unittest.TestCase):
@@ -93,6 +94,67 @@ class DpiCaptureTests(unittest.TestCase):
             (margins.left(), margins.top(), margins.right(), margins.bottom()),
             (EDITOR_CONTENT_PADDING * 2,) * 4,
         )
+
+    def test_text_padding_scales_with_font_size(self):
+        item = TextItem(font_size=14)
+        initial_padding = item.text_padding
+        self.assertAlmostEqual(item.document().documentMargin(), initial_padding)
+
+        item.set_font_size(28)
+        self.assertAlmostEqual(item.text_padding, initial_padding * 2)
+        self.assertAlmostEqual(item.document().documentMargin(), initial_padding * 2)
+
+    def test_text_background_picker_supports_transparent(self):
+        dialog = self.keep(BasicColorDialog(
+            QColor("#FFFFFF"), title="Background color", allow_transparent=True
+        ))
+        transparent = next(
+            button for button in dialog.findChildren(QToolButton)
+            if button.accessibleName() == "Transparent"
+        )
+        self.assertEqual(transparent.text(), "")
+        self.assertEqual(transparent.width(), transparent.height())
+        dialog.show()
+        self.app.processEvents()
+        black = next(
+            button for button in dialog.findChildren(QToolButton)
+            if button.accessibleName() == "Black"
+        )
+        self.assertEqual(transparent.y(), black.y())
+        self.assertLess(transparent.x(), black.x())
+        transparent.click()
+        self.assertTrue(dialog.selected_color.isValid())
+        self.assertEqual(dialog.selected_color.alpha(), 0)
+
+        editor = self.editor()
+        editor._on_text_bg_color_changed(dialog.selected_color)
+        self.assertEqual(self.config._data["text_bg_color"], "#00000000")
+        self.assertEqual(editor._canvas._text_bg_color.alpha(), 0)
+
+        popup = self.keep(TextSettingsPopup(
+            TextItem(bg_color=QColor(0, 0, 0, 0)), editor
+        ))
+        preview = popup.findChild(TransparencyPreviewButton)
+        self.assertIsNotNone(preview)
+        self.assertTrue(preview.is_transparent_preview)
+
+    def test_shift_constrains_new_rect_ellipse_and_line(self):
+        canvas = self.editor()._canvas
+        start = QPointF(100, 100)
+
+        canvas.set_tool(ToolType.RECT)
+        square_end = canvas._constrain_draw_endpoint(start, QPointF(180, 130), True)
+        self.assertEqual(abs(square_end.x() - start.x()), abs(square_end.y() - start.y()))
+
+        canvas.set_tool(ToolType.ELLIPSE)
+        circle_end = canvas._constrain_draw_endpoint(start, QPointF(125, 190), True)
+        self.assertEqual(abs(circle_end.x() - start.x()), abs(circle_end.y() - start.y()))
+
+        canvas.set_tool(ToolType.LINE)
+        horizontal_end = canvas._constrain_draw_endpoint(start, QPointF(180, 130), True)
+        self.assertEqual(horizontal_end.y(), start.y())
+        vertical_end = canvas._constrain_draw_endpoint(start, QPointF(120, 190), True)
+        self.assertEqual(vertical_end.x(), start.x())
 
     def test_annotation_positions_are_constrained_to_the_captured_image(self):
         canvas = self.editor()._canvas
