@@ -32,6 +32,7 @@ from settings.config import Config
 from hotkey.manager import HotkeyManager
 from capture.fullscreen import capture_fullscreen
 from capture.region import RegionSelector
+from capture.scroll_capture import ScrollCaptureSession, ScrollRegionSelector
 from capture.timed_region import TimedRegionSelector
 from editor.editor_window import EditorWindow
 from settings.settings_dialog import SettingsDialog
@@ -77,6 +78,8 @@ class SnapEditApp:
         self._timed_region_selector = None
         self._ocr_selector = None
         self._ocr_worker = None
+        self._scroll_selector = None
+        self._scroll_session = None
 
         # Pay lazy font/style initialization before announcing readiness or
         # accepting capture hotkeys. No desktop image is captured at startup.
@@ -199,6 +202,11 @@ class SnapEditApp:
         region_action.triggered.connect(self._capture_region)
         menu.addAction(region_action)
 
+        scroll_action = QAction("Scrolling capture", menu)
+        scroll_action.setShortcut(QKeySequence(self._config.get("hotkeys.scroll", "")))
+        scroll_action.triggered.connect(self._capture_scroll)
+        menu.addAction(scroll_action)
+
         timed_region_action = QAction("Timed region capture", menu)
         timed_region_action.setShortcut(QKeySequence(self._config.get("hotkeys.timed_region", "")))
         timed_region_action.triggered.connect(self._capture_timed_region)
@@ -212,6 +220,7 @@ class SnapEditApp:
         self._tray_capture_actions = {
             "fullscreen": fullscreen_action,
             "region": region_action,
+            "scroll": scroll_action,
             "timed_region": timed_region_action,
             "ocr": ocr_action,
         }
@@ -275,24 +284,31 @@ class SnapEditApp:
             self._capture_timed_region
         )
         self._hotkey_manager.ocr_triggered.connect(self._capture_text)
+        self._hotkey_manager.scroll_triggered.connect(self._capture_scroll)
         self._hotkey_manager.start()
 
     def _capture_fullscreen(self):
         """Capture the full screen and open editor."""
+        if self._scroll_capture_active():
+            return
         # Small delay to let menu close / tray hide
         QTimer.singleShot(300, self._do_fullscreen_capture)
 
     def _do_fullscreen_capture(self):
+        if self._scroll_capture_active():
+            return
         pixmap = capture_fullscreen()
         if pixmap and not pixmap.isNull():
             self._open_editor(pixmap)
 
     def _capture_region(self):
         """Open region selector overlay."""
+        if self._scroll_capture_active():
+            return
         QTimer.singleShot(200, self._do_region_capture)
 
     def _do_region_capture(self):
-        if self._region_selector:
+        if self._region_selector or self._scroll_capture_active():
             return
         self._region_selector = RegionSelector()
         self._region_selector.region_captured.connect(self._on_region_captured)
@@ -315,9 +331,13 @@ class SnapEditApp:
 
     def _capture_timed_region(self):
         """Open the timed region selector after the tray menu closes."""
+        if self._scroll_capture_active():
+            return
         QTimer.singleShot(200, self._do_timed_region_capture)
 
     def _do_timed_region_capture(self):
+        if self._scroll_capture_active():
+            return
         if self._timed_region_selector:
             self._timed_region_selector.close()
             self._timed_region_selector.deleteLater()
@@ -344,10 +364,67 @@ class SnapEditApp:
 
     def _capture_text(self):
         """Open the region picker and OCR the selected pixels to clipboard."""
+        if self._scroll_capture_active():
+            return
         QTimer.singleShot(200, self._do_text_capture)
 
+    def _scroll_capture_active(self):
+        return self._scroll_selector is not None or self._scroll_session is not None
+
+    def _capture_scroll(self):
+        """Select a fixed screen region, then scroll and stitch it."""
+        if self._scroll_capture_active() or any((
+            self._region_selector, self._timed_region_selector,
+            self._ocr_selector, self._ocr_worker,
+        )):
+            return
+        QTimer.singleShot(200, self._do_scroll_capture)
+
+    def _do_scroll_capture(self):
+        if self._scroll_capture_active() or any((
+            self._region_selector, self._timed_region_selector,
+            self._ocr_selector, self._ocr_worker,
+        )):
+            return
+        self._scroll_selector = ScrollRegionSelector()
+        self._scroll_selector.region_selected.connect(self._on_scroll_region_selected)
+        self._scroll_selector.selection_cancelled.connect(self._on_scroll_selection_cancelled)
+        self._scroll_selector.start()
+
+    def _on_scroll_selection_cancelled(self):
+        selector = self._scroll_selector
+        self._scroll_selector = None
+        if selector:
+            selector.deleteLater()
+
+    def _on_scroll_region_selected(self, rect: QRect):
+        self._on_scroll_selection_cancelled()
+        session = ScrollCaptureSession(rect, self._app)
+        self._scroll_session = session
+        session.capture_ready.connect(self._on_scroll_capture_ready)
+        session.message.connect(lambda message: self._show_notification(
+            message, 7000, QSystemTrayIcon.MessageIcon.Warning,
+        ))
+        session.finished.connect(self._on_scroll_capture_finished)
+        for action in self._tray_capture_actions.values():
+            action.setEnabled(False)
+        session.start()
+
+    def _on_scroll_capture_ready(self, pixmap: QPixmap):
+        if pixmap and not pixmap.isNull():
+            self._open_editor(pixmap)
+
+    def _on_scroll_capture_finished(self):
+        session = self._scroll_session
+        self._scroll_session = None
+        for action in self._tray_capture_actions.values():
+            action.setEnabled(True)
+        if session:
+            session.deleteLater()
+
     def _do_text_capture(self):
-        if self._ocr_selector or (self._ocr_worker and self._ocr_worker.isRunning()):
+        if (self._scroll_capture_active() or self._ocr_selector
+                or (self._ocr_worker and self._ocr_worker.isRunning())):
             return
         self._ocr_selector = RegionSelector()
         self._ocr_selector.region_captured.connect(self._on_text_region_captured)
@@ -465,6 +542,10 @@ class SnapEditApp:
             self._region_selector.close()
         if self._ocr_selector:
             self._ocr_selector.close()
+        if self._scroll_selector:
+            self._scroll_selector.close()
+        if self._scroll_session:
+            self._scroll_session.dispose()
         if self._ocr_worker and self._ocr_worker.isRunning():
             self._ocr_worker.requestInterruption()
             self._ocr_worker.wait(3000)

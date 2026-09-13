@@ -94,6 +94,7 @@ class HotkeyManager(QObject):
     region_triggered = pyqtSignal()
     timed_region_triggered = pyqtSignal()
     ocr_triggered = pyqtSignal()
+    scroll_triggered = pyqtSignal()
     registration_failed = pyqtSignal(str)
 
     def __init__(self, config, parent=None):
@@ -111,7 +112,7 @@ class HotkeyManager(QObject):
         app.installNativeEventFilter(self._filter)
         self._installed = True
         errors = []
-        for name in ('fullscreen', 'region', 'timed_region', 'ocr'):
+        for name in ('fullscreen', 'region', 'timed_region', 'ocr', 'scroll'):
             text = self._config.hotkeys.get(name, '')
             if not text.strip():
                 continue

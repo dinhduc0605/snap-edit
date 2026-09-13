@@ -326,11 +326,13 @@ class SettingsDialog(QDialog):
         self._hk_region = QKeySequenceEdit()
         self._hk_timed_region = QKeySequenceEdit()
         self._hk_ocr = QKeySequenceEdit()
+        self._hk_scroll = QKeySequenceEdit()
 
         form.addRow(QLabel("Full screen"), self._hk_fullscreen)
         form.addRow(QLabel("Region"), self._hk_region)
         form.addRow(QLabel("Timed region"), self._hk_timed_region)
         form.addRow(QLabel("Copy text from screen"), self._hk_ocr)
+        form.addRow(QLabel("Scrolling capture"), self._hk_scroll)
 
         layout.addWidget(group)
         layout.addStretch()
@@ -471,6 +473,9 @@ class SettingsDialog(QDialog):
         self._hk_ocr.setKeySequence(
             QKeySequence.fromString(self._format_hotkey_display(hotkeys.get("ocr", "")))
         )
+        self._hk_scroll.setKeySequence(
+            QKeySequence.fromString(self._format_hotkey_display(hotkeys.get("scroll", "")))
+        )
 
         self._save_dir_edit.setText(self._config.save_directory)
 
@@ -550,6 +555,10 @@ class SettingsDialog(QDialog):
         self._config.set(
             "hotkeys.ocr",
             self._format_hotkey_store(self._hk_ocr.keySequence()),
+        )
+        self._config.set(
+            "hotkeys.scroll",
+            self._format_hotkey_store(self._hk_scroll.keySequence()),
         )
 
         # Storage

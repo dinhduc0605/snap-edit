@@ -25,6 +25,7 @@ class HotkeyTests(unittest.TestCase):
         self.events = []
         self.manager.fullscreen_triggered.connect(lambda: self.events.append('full'))
         self.manager.region_triggered.connect(lambda: self.events.append('region'))
+        self.manager.scroll_triggered.connect(lambda: self.events.append('scroll'))
 
     def tearDown(self):
         self.manager.stop()
@@ -76,3 +77,9 @@ class HotkeyTests(unittest.TestCase):
         identifier = next(iter(self.manager._bindings))
         self.assertTrue(self.manager.dispatch(identifier, (50 << 16) | 5))
         self.assertEqual(self.events, ['region'])
+
+    def test_scrolling_capture_hotkey_dispatches(self):
+        self.manager.reload(SimpleNamespace(hotkeys={'scroll': 'alt+shift+5'}))
+        identifier = next(iter(self.manager._bindings))
+        self.assertTrue(self.manager.dispatch(identifier, (53 << 16) | 5))
+        self.assertEqual(self.events, ['scroll'])

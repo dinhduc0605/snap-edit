@@ -7,6 +7,7 @@ SnapEdit is a lightweight, fast, and feature-rich screenshot capture and annotat
 - **Global Hotkeys**: Instantly capture the full screen or a specific region using global keyboard shortcuts (even when the app is in the background).
 - **Region Capture**: Smooth, translucent overlay for precise rectangular selection with real-time dimension display.
 - **Timed Region Capture**: Select a region, choose a 3, 5, or 10 second delay, then interact through the countdown overlay to open menus, tooltips, and dropdowns before capture. Press `Esc` during the countdown to cancel.
+- **Scrolling Capture**: Select a scrolling area and SnapEdit automatically scrolls, aligns overlapping frames, and opens the resulting long image in the editor. Press `Enter` to finish or `Esc` to cancel.
 - **Rich Annotation Tools**:
   - 🖱️ **Select/Move**: Easily select, resize, and move any drawn shape or text.
   - ✂️ **Shapes**: Draw Rectangles, Ellipses, Lines, and Arrows.
@@ -59,6 +60,7 @@ If you prefer to run the application from the Python source code, follow these s
 - **Capture Region**: `Alt+Shift+2`
 - **Timed Region Capture**: `Alt+Shift+3`
 - **Copy text from screen**: `Alt+Shift+4`
+- **Scrolling capture**: `Alt+Shift+5`
 
 *Note: You can easily customize these hotkeys by right-clicking the system tray icon and selecting **Settings**.*
 

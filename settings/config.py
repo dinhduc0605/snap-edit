@@ -14,6 +14,7 @@ DEFAULT_CONFIG = {
         "region": "alt+shift+2",
         "timed_region": "alt+shift+3",
         "ocr": "alt+shift+4",
+        "scroll": "alt+shift+5",
     },
     "ocr": {
         "language": "auto",
