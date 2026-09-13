@@ -198,7 +198,7 @@ class FluentSpinBox(QSpinBox):
 
         color = QColor(TEXT_SECONDARY if self.isEnabled() else TEXT_DISABLED)
         scale = self.property("uiScale") or 1.0
-        pen = QPen(color, 1.6)
+        pen = QPen(color, 1.35)
         pen.setCapStyle(Qt.PenCapStyle.RoundCap)
         pen.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
         painter.setPen(pen)

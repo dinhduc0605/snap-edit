@@ -98,6 +98,7 @@ _POPUP_STYLESHEET = f"""
 
 _CANVAS_GRID_SPACING = 32
 _CANVAS_GRID_COLOR = QColor("#292929")
+_WORKSPACE_MIN_MARGIN = 512.0
 
 
 class AddItemCommand(QUndoCommand):
@@ -547,6 +548,9 @@ class AnnotationCanvas(QGraphicsScene):
         
         self.addItem(self._background_item)
         self.setSceneRect(self._background_item.boundingRect())
+        for view in self.views():
+            if hasattr(view, "set_image_bounds"):
+                view.set_image_bounds(self._image_rect())
 
     def _image_rect(self) -> QRectF:
         """Return the screenshot's exact scene bounds."""
@@ -569,30 +573,12 @@ class AnnotationCanvas(QGraphicsScene):
         )
 
     def constrain_item_position(self, item, position: QPointF) -> QPointF:
-        """Keep a movable annotation's visible bounds within the screenshot."""
-        image_rect = self._image_rect()
-        if image_rect.isEmpty():
-            return position
+        """Return a movable annotation's requested position unchanged.
 
-        current_bounds = item.mapRectToScene(item.boundingRect())
-        proposed_bounds = current_bounds.translated(position - item.pos())
-        dx = 0.0
-        dy = 0.0
-        if proposed_bounds.width() <= image_rect.width():
-            if proposed_bounds.left() < image_rect.left():
-                dx = image_rect.left() - proposed_bounds.left()
-            elif proposed_bounds.right() > image_rect.right():
-                dx = image_rect.right() - proposed_bounds.right()
-        else:
-            dx = image_rect.center().x() - proposed_bounds.center().x()
-        if proposed_bounds.height() <= image_rect.height():
-            if proposed_bounds.top() < image_rect.top():
-                dy = image_rect.top() - proposed_bounds.top()
-            elif proposed_bounds.bottom() > image_rect.bottom():
-                dy = image_rect.bottom() - proposed_bounds.bottom()
-        else:
-            dy = image_rect.center().y() - proposed_bounds.center().y()
-        return QPointF(position.x() + dx, position.y() + dy)
+        Annotations may intentionally extend beyond the screenshot.  Those
+        areas are included in copy/save output on a black background.
+        """
+        return QPointF(position)
 
     def set_tool(self, tool: str):
         """Set the current drawing tool."""
@@ -612,7 +598,7 @@ class AnnotationCanvas(QGraphicsScene):
         from editor.ocr_overlay import OcrTextOverlay
 
         self.clear_ocr_overlay()
-        overlay = OcrTextOverlay(layout, self.sceneRect())
+        overlay = OcrTextOverlay(layout, self._image_rect())
         overlay.selection_changed.connect(self.ocr_selection_changed)
         self._ocr_overlay = overlay
         self.addItem(overlay)
@@ -731,12 +717,6 @@ class AnnotationCanvas(QGraphicsScene):
             super().mousePressEvent(event)
             return
 
-        # The grid is workspace chrome, not drawable space. New annotations
-        # can only start on the captured image.
-        if not self.is_inside_image(pos):
-            event.accept()
-            return
-
         if self._current_tool == ToolType.BUBBLE:
             self._add_bubble(pos)
             return
@@ -771,7 +751,7 @@ class AnnotationCanvas(QGraphicsScene):
                                                       ToolType.RECT, ToolType.ELLIPSE):
             pos = self._constrain_draw_endpoint(
                 self._draw_start,
-                self.clamp_to_image(event.scenePos()),
+                event.scenePos(),
                 bool(event.modifiers() & Qt.KeyboardModifier.ShiftModifier),
             )
             if self._current_draw_item is None:
@@ -794,7 +774,7 @@ class AnnotationCanvas(QGraphicsScene):
                 self._draw_start,
                 self._constrain_draw_endpoint(
                     self._draw_start,
-                    self.clamp_to_image(event.scenePos()),
+                    event.scenePos(),
                     bool(event.modifiers() & Qt.KeyboardModifier.ShiftModifier),
                 ),
             )
@@ -877,18 +857,6 @@ class AnnotationCanvas(QGraphicsScene):
             return QPointF(end)
         horizontal_direction = 1 if dx > 0 or (dx == 0 and dy >= 0) else -1
         vertical_direction = 1 if dy > 0 or (dy == 0 and dx >= 0) else -1
-        image_rect = self._image_rect()
-        max_horizontal = (
-            image_rect.right() - start.x()
-            if horizontal_direction > 0
-            else start.x() - image_rect.left()
-        )
-        max_vertical = (
-            image_rect.bottom() - start.y()
-            if vertical_direction > 0
-            else start.y() - image_rect.top()
-        )
-        side = min(side, max_horizontal, max_vertical)
         return QPointF(
             start.x() + horizontal_direction * side,
             start.y() + vertical_direction * side,
@@ -901,14 +869,7 @@ class AnnotationCanvas(QGraphicsScene):
         item = BubbleItem(number, self._pen_color, bubble_size=self._bubble_size)
         item.setScale(self._annotation_scale)
         radius = (self._bubble_size / 2.0) * self._annotation_scale
-        diameter = self._bubble_size * self._annotation_scale
-        image_rect = self._image_rect()
-        max_x = max(image_rect.left(), image_rect.right() - diameter)
-        max_y = max(image_rect.top(), image_rect.bottom() - diameter)
-        item.setPos(
-            min(max(pos.x() - radius, image_rect.left()), max_x),
-            min(max(pos.y() - radius, image_rect.top()), max_y),
-        )
+        item.setPos(pos.x() - radius, pos.y() - radius)
         cmd = AddBubbleCommand(self, item, number)
         self._undo_stack.push(cmd)
         self.item_added.emit()
@@ -917,27 +878,28 @@ class AnnotationCanvas(QGraphicsScene):
         """Add a text item at the given position."""
         from editor.items.text_item import TextItem
         item = TextItem(self._text_color, self._text_size, self._text_bg_color)
-        image_rect = self._image_rect()
-        text_bounds = item.boundingRect()
-        max_x = max(image_rect.left(), image_rect.right() - text_bounds.width())
-        max_y = max(image_rect.top(), image_rect.bottom() - text_bounds.height())
-        item.setPos(
-            min(max(pos.x(), image_rect.left()), max_x),
-            min(max(pos.y(), image_rect.top()), max_y),
-        )
+        item.setPos(pos)
         cmd = AddItemCommand(self, item, "Add text")
         self._undo_stack.push(cmd)
         self.item_added.emit()
 
+    def export_bounds(self) -> QRectF:
+        """Return the screenshot plus every visible annotation's bounds."""
+        bounds = QRectF(self._image_rect())
+        for item in self.get_annotation_items():
+            if item.isVisible():
+                bounds = bounds.united(item.sceneBoundingRect())
+        return bounds
+
     def export_to_pixmap(self) -> QPixmap:
-        """Render the entire scene (background + annotations) to a QPixmap."""
+        """Render the screenshot and annotations, extending black if needed."""
         # Deselect all items to hide handles
         for item in self.selectedItems():
             item.setSelected(False)
 
-        rect = self.sceneRect()
-        pixmap = QPixmap(int(rect.width()), int(rect.height()))
-        pixmap.fill(Qt.GlobalColor.white)
+        rect = self.export_bounds().toAlignedRect()
+        pixmap = QPixmap(max(1, rect.width()), max(1, rect.height()))
+        pixmap.fill(Qt.GlobalColor.black)
         overlay = self._ocr_overlay
         overlay_visible = self.has_ocr_overlay() and overlay.isVisible()
         if overlay_visible:
@@ -946,7 +908,7 @@ class AnnotationCanvas(QGraphicsScene):
         try:
             painter.setRenderHint(QPainter.RenderHint.Antialiasing)
             painter.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform)
-            self.render(painter, QRectF(pixmap.rect()), rect)
+            self.render(painter, QRectF(pixmap.rect()), QRectF(rect))
         finally:
             painter.end()
             if overlay_visible and not sip.isdeleted(overlay):
@@ -1016,6 +978,7 @@ class CanvasView(QGraphicsView):
         self._grab_mode = False
         self._prev_drag_mode = QGraphicsView.DragMode.NoDrag
         self._pan_drag_active = False
+        self.set_image_bounds(scene._image_rect())
         self.setStyleSheet("""
             QGraphicsView {
                 background: %s;
@@ -1039,6 +1002,15 @@ class CanvasView(QGraphicsView):
                 height: 0px;
             }
         """ % (CONTENT, BASE, BORDER, HOVER))
+
+    def set_image_bounds(self, image_rect: QRectF):
+        """Keep a stable, symmetric drawing workspace around the image."""
+        if image_rect.isEmpty():
+            return
+        margin_x = max(_WORKSPACE_MIN_MARGIN, image_rect.width() * 0.5)
+        margin_y = max(_WORKSPACE_MIN_MARGIN, image_rect.height() * 0.5)
+        self.setSceneRect(image_rect.adjusted(-margin_x, -margin_y,
+                                              margin_x, margin_y))
 
     def drawBackground(self, painter, rect):
         """Draw a subtle, viewport-fixed grid around the screenshot canvas."""
@@ -1155,7 +1127,8 @@ class CanvasView(QGraphicsView):
     def fit_in_view_nice(self):
         """Fit an oversized scene to the canvas bounds, never upscaling."""
         if self.scene():
-            scene_rect = self.scene().sceneRect()
+            image_rect = getattr(self.scene(), "_image_rect", None)
+            scene_rect = image_rect() if callable(image_rect) else self.scene().sceneRect()
             viewport_rect = self.viewport().rect()
             if (
                 scene_rect.width() <= viewport_rect.width()

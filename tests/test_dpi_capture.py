@@ -156,19 +156,81 @@ class DpiCaptureTests(unittest.TestCase):
         vertical_end = canvas._constrain_draw_endpoint(start, QPointF(120, 190), True)
         self.assertEqual(vertical_end.x(), start.x())
 
-    def test_annotation_positions_are_constrained_to_the_captured_image(self):
+    def test_annotations_can_extend_past_the_captured_image_and_export_black(self):
         canvas = self.editor()._canvas
-        shape = RectItem(QRectF(10, 10, 100, 80))
+        shape = RectItem(QRectF(0, 0, 20, 20))
         canvas.addItem(shape)
 
-        shape.setPos(5000, 5000)
+        shape.setPos(-40, 10)
         image_rect = canvas.sceneRect()
         bounds = shape.sceneBoundingRect()
-        self.assertLessEqual(bounds.right(), image_rect.right())
-        self.assertLessEqual(bounds.bottom(), image_rect.bottom())
+        self.assertLess(bounds.left(), image_rect.left())
+
+        exported = canvas.export_to_pixmap()
+        self.assertGreater(exported.width(), self.pixmap.width())
         self.assertEqual(
-            canvas.clamp_to_image(QPointF(-100, 9999)),
-            QPointF(image_rect.left(), image_rect.bottom()),
+            exported.toImage().pixelColor(0, 0), QColor(Qt.GlobalColor.black)
+        )
+
+    def test_shape_picker_updates_the_active_mode_and_toolbar_icon(self):
+        toolbar = self.editor()._toolbar
+        toolbar._set_shape_tool(ToolType.RECT)
+
+        self.assertEqual(toolbar.current_tool, ToolType.RECT)
+        self.assertEqual(toolbar._shape_button.property("iconName"), "rect")
+        self.assertTrue(toolbar._shape_button.property("pickerIndicator"))
+        self.assertTrue(toolbar._shape_button.isChecked())
+
+    def test_shape_picker_is_compact_and_selects_a_shape(self):
+        toolbar = self.editor()._toolbar
+        toolbar.show()
+        self.app.processEvents()
+        toolbar._shape_button.click()
+        self.app.processEvents()
+
+        popup = toolbar._shape_picker
+        self.assertIsNotNone(popup)
+        self.assertTrue(popup.isVisible())
+        self.assertLessEqual(popup.width(), 220)
+        self.assertLessEqual(popup.height(), 210)
+
+        popup.close()
+        self.app.processEvents()
+        self.assertEqual(toolbar.current_tool, ToolType.SELECT)
+        self.assertTrue(toolbar._tool_buttons[ToolType.SELECT].isChecked())
+
+        toolbar._shape_button.click()
+        self.app.processEvents()
+        popup = toolbar._shape_picker
+
+        popup._buttons[ToolType.ELLIPSE].click()
+        self.app.processEvents()
+        self.assertEqual(toolbar.current_tool, ToolType.ELLIPSE)
+        self.assertEqual(toolbar._shape_button.property("iconName"), "ellipse")
+
+    def test_shape_can_start_in_the_workspace_outside_the_screenshot(self):
+        small_capture = QPixmap(100, 100)
+        small_capture.fill(QColor("#357abc"))
+        editor = self.keep(EditorWindow(small_capture, self.config))
+        editor.show()
+        self.app.processEvents()
+        editor._toolbar.set_tool(ToolType.LINE)
+
+        image_origin_before = editor._view.mapFromScene(QPointF(0, 0))
+        start = editor._view.mapFromScene(QPointF(-20, 20))
+        end = editor._view.mapFromScene(QPointF(20, 20))
+        self.assertTrue(editor._view.viewport().rect().contains(start))
+        QTest.mousePress(editor._view.viewport(), Qt.MouseButton.LeftButton,
+                         Qt.KeyboardModifier.NoModifier, start)
+        QTest.mouseMove(editor._view.viewport(), end)
+        QTest.mouseRelease(editor._view.viewport(), Qt.MouseButton.LeftButton,
+                           Qt.KeyboardModifier.NoModifier, end)
+        self.app.processEvents()
+
+        item = editor._canvas.get_annotation_items()[0]
+        self.assertLess(item.sceneBoundingRect().left(), 0)
+        self.assertEqual(
+            editor._view.mapFromScene(QPointF(0, 0)), image_origin_before
         )
 
     def test_monitor_transition_does_not_edit_selected_annotations(self):

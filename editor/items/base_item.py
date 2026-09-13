@@ -40,18 +40,14 @@ HANDLE_HIT_MARGIN: float = 5.0
 
 
 def constrained_event_pos(item: QGraphicsItem, event: QGraphicsSceneMouseEvent) -> QPointF:
-    """Return an item-local pointer position constrained to the screenshot."""
-    scene = item.scene()
-    clamp = getattr(scene, "clamp_to_image", None)
-    if callable(clamp):
-        return item.mapFromScene(clamp(event.scenePos()))
-    return event.pos()
+    """Return an item-local pointer position without clipping to the image."""
+    return item.mapFromScene(event.scenePos())
 
 
 def constrain_item_position_change(
     item: QGraphicsItem, change: QGraphicsItem.GraphicsItemChange, value,
 ):
-    """Keep movable annotations inside the image when their position changes."""
+    """Allow movable annotations to extend beyond the captured image."""
     if change != QGraphicsItem.GraphicsItemChange.ItemPositionChange:
         return value
     scene = item.scene()

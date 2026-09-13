@@ -3,15 +3,15 @@ Toolbar widget for the SnapEdit editor.
 Provides tool selection, color picker, and stroke size controls.
 Uses emoji text icons (no external icon library required).
 """
-from PyQt6.QtCore import Qt, pyqtSignal, QSize, QPointF, QRectF, QSignalBlocker
+from PyQt6.QtCore import Qt, pyqtSignal, QSize, QPoint, QPointF, QRect, QRectF, QSignalBlocker
 from PyQt6.QtGui import (
     QColor, QIcon, QPainter, QPixmap, QFont, QPainterPath,
-    QPen,
+    QPalette, QPen,
 )
 from PyQt6.QtWidgets import (
     QWidget, QHBoxLayout, QVBoxLayout,
     QToolButton, QButtonGroup,
-    QFrame, QCheckBox, QLabel,
+    QFrame, QCheckBox, QLabel, QGridLayout, QStyle, QStyleOption,
 )
 
 from theme import (
@@ -23,7 +23,10 @@ from theme import (
 from ui_widgets import BasicColorDialog, FluentSpinBox
 
 
-def _toolbar_icon(name: str, size: int = 24) -> QIcon:
+_TOOLBAR_ICON_STROKE = 1.35
+
+
+def _toolbar_icon(name: str, size: int = 24, *, reserve_picker_corner: bool = False) -> QIcon:
     """Create a crisp, font-independent toolbar icon."""
     dpr = 2.0
     pixmap = QPixmap(int(size * dpr), int(size * dpr))
@@ -33,7 +36,7 @@ def _toolbar_icon(name: str, size: int = 24) -> QIcon:
     painter = QPainter(pixmap)
     painter.setRenderHint(QPainter.RenderHint.Antialiasing)
     color = QColor(TEXT_PRIMARY)
-    pen = QPen(color, 1.7)
+    pen = QPen(color, _TOOLBAR_ICON_STROKE)
     pen.setCapStyle(Qt.PenCapStyle.RoundCap)
     pen.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
     painter.setPen(pen)
@@ -41,7 +44,9 @@ def _toolbar_icon(name: str, size: int = 24) -> QIcon:
 
     scale = size / 22.0
     painter.scale(scale, scale)
-
+    if reserve_picker_corner:
+        painter.save()
+        painter.translate(-1.25, -1.25)
     if name == "select":
         path = QPainterPath(QPointF(4.0, 2.5))
         path.lineTo(4.0, 17.5)
@@ -105,14 +110,58 @@ def _toolbar_icon(name: str, size: int = 24) -> QIcon:
         painter.drawRoundedRect(QRectF(4.0, 3.0, 14.0, 16.0), 1.5, 1.5)
         painter.drawRect(QRectF(7.0, 3.0, 7.5, 5.0))
         painter.drawRoundedRect(QRectF(7.0, 12.0, 8.0, 7.0), 1.0, 1.0)
+
+    if reserve_picker_corner:
+        painter.restore()
+
     painter.end()
     return QIcon(pixmap)
 
 
+class ShapeToolButton(QToolButton):
+    """Toolbar button that draws Qt's native menu-indicator primitive."""
+
+    def paintEvent(self, event):
+        super().paintEvent(event)
+
+        scale = self.property("uiScale") or 1.0
+        indicator_size = max(5, round(5 * scale))
+        icon_size = self.iconSize()
+        icon_rect = QRect(
+            (self.width() - icon_size.width()) // 2,
+            (self.height() - icon_size.height()) // 2,
+            icon_size.width(),
+            icon_size.height(),
+        )
+        option = QStyleOption()
+        option.initFrom(self)
+        option.rect = QRect(
+            icon_rect.right() - indicator_size - 1,
+            icon_rect.bottom() - indicator_size - 1,
+            indicator_size,
+            indicator_size,
+        )
+        palette = option.palette
+        palette.setColor(QPalette.ColorRole.WindowText, QColor(TEXT_SECONDARY))
+        palette.setColor(QPalette.ColorRole.ButtonText, QColor(TEXT_SECONDARY))
+        option.palette = palette
+
+        painter = QPainter(self)
+        try:
+            self.style().drawPrimitive(
+                QStyle.PrimitiveElement.PE_IndicatorArrowDown,
+                option,
+                painter,
+                self,
+            )
+        finally:
+            painter.end()
+
+
 def _make_btn(icon_name: str, tooltip: str, checkable: bool = False,
-              size: int = 24) -> QToolButton:
+              size: int = 24, button_class=QToolButton) -> QToolButton:
     """Create a styled QToolButton with a vector icon."""
-    btn = QToolButton()
+    btn = button_class()
     btn.setIcon(_toolbar_icon(icon_name))
     btn.setIconSize(QSize(24, 24))
     btn.setProperty("iconName", icon_name)
@@ -122,6 +171,103 @@ def _make_btn(icon_name: str, tooltip: str, checkable: bool = False,
     btn.setCursor(Qt.CursorShape.PointingHandCursor)
     btn.setAccessibleName(tooltip.split(" (")[0])
     return btn
+
+
+class ShapePickerPopover(QFrame):
+    """Compact Fluent-style shape picker anchored below the toolbar button."""
+
+    tool_selected = pyqtSignal(str)
+    dismissed = pyqtSignal()
+
+    def __init__(self, tool_info: dict[str, tuple[str, str, str]],
+                 selected_tool: str, scale: float, parent=None):
+        super().__init__(parent, Qt.WindowType.Popup | Qt.WindowType.FramelessWindowHint)
+        self.setObjectName("shapePickerPopover")
+        self.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
+        self._dismissed = False
+
+        layout = QVBoxLayout(self)
+        margin = max(8, round(10 * scale))
+        layout.setContentsMargins(margin, margin, margin, margin)
+        layout.setSpacing(max(6, round(8 * scale)))
+
+        title = QLabel("Shapes")
+        title.setObjectName("shapePickerTitle")
+        layout.addWidget(title)
+
+        grid = QGridLayout()
+        grid.setContentsMargins(0, 0, 0, 0)
+        grid.setHorizontalSpacing(max(5, round(6 * scale)))
+        grid.setVerticalSpacing(max(5, round(6 * scale)))
+        layout.addLayout(grid)
+
+        button_width = max(72, round(86 * scale))
+        button_height = max(58, round(66 * scale))
+        icon_size = max(20, round(22 * scale))
+        self._buttons: dict[str, QToolButton] = {}
+        for index, (tool_type, (icon_name, label, shortcut)) in enumerate(tool_info.items()):
+            button = QToolButton(self)
+            button.setObjectName("shapePickerOption")
+            button.setProperty("selected", tool_type == selected_tool)
+            button.setText(label)
+            button.setIcon(_toolbar_icon(icon_name, icon_size))
+            button.setIconSize(QSize(icon_size, icon_size))
+            button.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextUnderIcon)
+            button.setFixedSize(button_width, button_height)
+            button.setToolTip(f"{label} ({shortcut})")
+            button.setAccessibleName(label)
+            button.setCursor(Qt.CursorShape.PointingHandCursor)
+            button.clicked.connect(
+                lambda _checked=False, tool=tool_type: self._select_tool(tool)
+            )
+            grid.addWidget(button, index // 2, index % 2)
+            self._buttons[tool_type] = button
+
+        self.setStyleSheet(f"""
+            QFrame#shapePickerPopover {{
+                background: {SURFACE};
+                border: 1px solid {BORDER};
+                border-radius: {OVERLAY_RADIUS}px;
+            }}
+            QLabel#shapePickerTitle {{
+                color: {TEXT_SECONDARY};
+                font-family: 'Segoe UI Variable', 'Segoe UI';
+                font-size: {TYPE_CAPTION_PT}pt;
+                font-weight: 600;
+                padding: 1px 2px 0 2px;
+            }}
+            QToolButton#shapePickerOption {{
+                background: {SURFACE_ALT};
+                border: 1px solid transparent;
+                border-radius: {CONTROL_RADIUS}px;
+                color: {TEXT_PRIMARY};
+                font-family: 'Segoe UI Variable', 'Segoe UI';
+                font-size: {TYPE_BODY_PT}pt;
+                font-weight: 600;
+                padding: 5px;
+            }}
+            QToolButton#shapePickerOption:hover {{
+                background: {HOVER};
+                border-color: {BORDER};
+            }}
+            QToolButton#shapePickerOption[selected="true"] {{
+                background: {ACCENT_SUBTLE};
+                border-color: {ACCENT};
+            }}
+            QToolButton#shapePickerOption:pressed {{
+                background: {PRESSED};
+            }}
+        """)
+
+    def _select_tool(self, tool_type: str):
+        self.tool_selected.emit(tool_type)
+        self.close()
+
+    def hideEvent(self, event):
+        if not self._dismissed:
+            self._dismissed = True
+            self.dismissed.emit()
+        super().hideEvent(event)
 
 
 class ColorButton(QToolButton):
@@ -274,7 +420,7 @@ class Toolbar(QWidget):
     Emits signals when tool, color, or stroke size changes.
 
     Layout (left → right):
-      Select | Text OCR | Text [TextColor] [TextBG] [TextSize] | Line Arrow Rect Ellipse
+      Select | Text OCR | Text [TextColor] [TextBG] [TextSize] | Shape picker
              | StrokeColor StrokeSize Fill | Bubble | → Undo Redo Copy Save
     """
 
@@ -331,22 +477,39 @@ class Toolbar(QWidget):
         self._button_group = QButtonGroup(self)
         self._button_group.setExclusive(True)
         self._tool_buttons: dict[str, QToolButton] = {}
+        self._shape_tool_info = {
+            ToolType.LINE: ("line", "Line", "L"),
+            ToolType.ARROW: ("arrow", "Arrow", "A"),
+            ToolType.RECT: ("rect", "Rectangle", "R"),
+            ToolType.ELLIPSE: ("ellipse", "Ellipse", "E"),
+        }
+        self._selected_shape_tool = ToolType.LINE
+        self._shape_picker = None
+        self._shape_picker_selection_made = False
 
         # Primary tools stay visible; properties are contextual.
         for tool_type, icon_name, tooltip in [
             (ToolType.SELECT,  "select",  "Select (V)"),
             (ToolType.OCR,     "ocr",     "Text OCR (O)"),
             (ToolType.TEXT,    "text",    "Text (T)"),
-            (ToolType.LINE,    "line",    "Line (L)"),
-            (ToolType.ARROW,   "arrow",   "Arrow (A)"),
-            (ToolType.RECT,    "rect",    "Rectangle (R)"),
-            (ToolType.ELLIPSE, "ellipse", "Ellipse (E)"),
             (ToolType.BUBBLE,  "bubble",  "Number bubble (B)"),
         ]:
             btn = _make_btn(icon_name, tooltip, checkable=True)
             self._button_group.addButton(btn)
             self._tool_buttons[tool_type] = btn
             command_row.addWidget(btn)
+
+        # Shape modes share one compact button.  Its custom popover keeps all
+        # four options immediately available without reserving four slots.
+        self._shape_button = _make_btn(
+            "line", "Shape: Line (L)", checkable=True,
+            button_class=ShapeToolButton,
+        )
+        self._shape_button.setObjectName("shapeButton")
+        self._shape_button.setProperty("pickerIndicator", True)
+        self._shape_button.setAccessibleName("Shape tool")
+        self._button_group.addButton(self._shape_button)
+        command_row.insertWidget(command_row.count() - 1, self._shape_button)
 
         command_row.addWidget(self._create_separator())
 
@@ -555,7 +718,10 @@ class Toolbar(QWidget):
         for btn in self.findChildren(QToolButton):
             name = btn.property("iconName")
             if name:
-                btn.setIcon(_toolbar_icon(name, round(24 * scale)))
+                btn.setIcon(_toolbar_icon(
+                    name, round(24 * scale),
+                    reserve_picker_corner=bool(btn.property("pickerIndicator")),
+                ))
         for btn in (self._color_button, self._text_color_btn, self._text_bg_btn):
             btn._update_icon()
         # Scaling must not trigger edits of the currently selected annotation.
@@ -573,12 +739,73 @@ class Toolbar(QWidget):
         self._redo_btn.setEnabled(can_redo)
 
     def _on_tool_clicked(self, button: QToolButton):
+        if button is self._shape_button:
+            self._show_shape_picker()
+            return
         for tool_type, btn in self._tool_buttons.items():
             if btn is button:
-                self._current_tool = tool_type
-                self._update_context_controls(tool_type)
-                self.tool_changed.emit(tool_type)
+                self._activate_tool(tool_type)
                 break
+
+    def _activate_tool(self, tool_type: str):
+        """Synchronize the toolbar chrome and tell the editor about a tool."""
+        self._current_tool = tool_type
+        self._update_context_controls(tool_type)
+        self.tool_changed.emit(tool_type)
+
+    def _set_shape_tool(self, tool_type: str):
+        """Select a shape mode from the picker and make it the active tool."""
+        if tool_type not in self._shape_tool_info:
+            return
+        self._selected_shape_tool = tool_type
+        icon_name, label, shortcut = self._shape_tool_info[tool_type]
+        self._shape_button.setProperty("iconName", icon_name)
+        self._shape_button.setIcon(
+            _toolbar_icon(
+                icon_name, self._shape_button.iconSize().width(),
+                reserve_picker_corner=True,
+            )
+        )
+        self._shape_button.setToolTip(f"Shape: {label} ({shortcut})")
+        self._shape_button.setChecked(True)
+        self._activate_tool(tool_type)
+
+    def _show_shape_picker(self):
+        """Open the shape picker beneath its toolbar button."""
+        popup = self._shape_picker
+        if popup is not None and popup.isVisible():
+            return
+
+        self._shape_picker_selection_made = False
+        scale = self.property("uiScale") or 1.0
+        popup = ShapePickerPopover(
+            self._shape_tool_info, self._selected_shape_tool, scale, self,
+        )
+        popup.tool_selected.connect(self._on_shape_picker_selected)
+        popup.dismissed.connect(self._on_shape_picker_dismissed)
+        popup.destroyed.connect(self._clear_shape_picker)
+        self._shape_picker = popup
+        popup.adjustSize()
+        popup.move(self._shape_button.mapToGlobal(
+            QPoint(0, self._shape_button.height() + max(4, round(6 * scale)))
+        ))
+        popup.show()
+        popup.raise_()
+
+    def _on_shape_picker_selected(self, tool_type: str):
+        self._shape_picker_selection_made = True
+        self._set_shape_tool(tool_type)
+
+    def _on_shape_picker_dismissed(self):
+        """Restore the previous checked toolbar button after a cancelled pick."""
+        if not self._shape_picker_selection_made:
+            if self._current_tool in self._shape_tool_info:
+                self._shape_button.setChecked(True)
+            elif self._current_tool in self._tool_buttons:
+                self._tool_buttons[self._current_tool].setChecked(True)
+
+    def _clear_shape_picker(self, *_args):
+        self._shape_picker = None
 
     def _apply_styles(self):
         self.update_scale(1.0)
@@ -588,11 +815,15 @@ class Toolbar(QWidget):
         btn_size = int(44 * factor)
         icon_size = max(20, int(24 * factor))
         icon_buttons = list(self._tool_buttons.values()) + [
+            self._shape_button,
             self._undo_btn, self._redo_btn,
         ]
         for btn in icon_buttons:
             btn.setFixedSize(btn_size, btn_size)
-            btn.setIcon(_toolbar_icon(btn.property("iconName"), icon_size))
+            btn.setIcon(_toolbar_icon(
+                btn.property("iconName"), icon_size,
+                reserve_picker_corner=bool(btn.property("pickerIndicator")),
+            ))
             btn.setIconSize(QSize(icon_size, icon_size))
 
         for btn, width in (
@@ -746,8 +977,9 @@ class Toolbar(QWidget):
 
     def set_tool(self, tool_type: str):
         """Programmatically set the active tool."""
+        if tool_type in self._shape_tool_info:
+            self._set_shape_tool(tool_type)
+            return
         if tool_type in self._tool_buttons:
             self._tool_buttons[tool_type].setChecked(True)
-            self._current_tool = tool_type
-            self._update_context_controls(tool_type)
-            self.tool_changed.emit(tool_type)
+            self._activate_tool(tool_type)
