@@ -359,6 +359,7 @@ class EditorWindow(QMainWindow):
         self._toolbar.save_file_requested.connect(self._save_file)
         self._toolbar.copy_clipboard_requested.connect(self._copy_clipboard)
         self._toolbar.gallery_requested.connect(self._open_gallery)
+        self._toolbar.always_on_top_changed.connect(self._set_always_on_top)
         self._canvas.ocr_selection_changed.connect(self._on_ocr_selection_changed)
         self._canvas.undo_stack.canUndoChanged.connect(
             lambda enabled: self._toolbar.set_command_state(
@@ -373,6 +374,16 @@ class EditorWindow(QMainWindow):
         self._toolbar.set_command_state(
             self._canvas.undo_stack.canUndo(), self._canvas.undo_stack.canRedo()
         )
+
+    def _set_always_on_top(self, enabled: bool):
+        """Apply the Pin command without changing the editor's normal window type."""
+        was_visible = self.isVisible()
+        self.setWindowFlag(Qt.WindowType.WindowStaysOnTopHint, enabled)
+        if was_visible:
+            # Changing window flags hides a native window on Windows.
+            self.show()
+            if enabled:
+                self.raise_()
 
     def _on_tool_changed(self, tool: str):
         """Apply a tool switch and start/clear the transient editor OCR mode."""

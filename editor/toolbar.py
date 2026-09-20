@@ -110,6 +110,18 @@ def _toolbar_icon(name: str, size: int = 24, *, reserve_picker_corner: bool = Fa
         painter.drawRoundedRect(QRectF(4.0, 3.0, 14.0, 16.0), 1.5, 1.5)
         painter.drawRect(QRectF(7.0, 3.0, 7.5, 5.0))
         painter.drawRoundedRect(QRectF(7.0, 12.0, 8.0, 7.0), 1.0, 1.0)
+    elif name == "pin":
+        pin = QPainterPath(QPointF(7.0, 4.0))
+        pin.lineTo(15.0, 4.0)
+        pin.lineTo(14.0, 10.0)
+        pin.lineTo(17.0, 12.0)
+        pin.lineTo(17.0, 13.0)
+        pin.lineTo(5.0, 13.0)
+        pin.lineTo(5.0, 12.0)
+        pin.lineTo(8.0, 10.0)
+        pin.closeSubpath()
+        painter.drawPath(pin)
+        painter.drawLine(QPointF(11.0, 13.0), QPointF(11.0, 19.0))
 
     if reserve_picker_corner:
         painter.restore()
@@ -437,6 +449,7 @@ class Toolbar(QWidget):
     save_file_requested      = pyqtSignal()
     copy_clipboard_requested = pyqtSignal()
     gallery_requested        = pyqtSignal()
+    always_on_top_changed    = pyqtSignal(bool)
 
     def __init__(self, initial_color: QColor = QColor("#FF3B30"),
                  initial_width: int = 5, parent=None, *,
@@ -617,6 +630,13 @@ class Toolbar(QWidget):
         self._gallery_btn.clicked.connect(self.gallery_requested.emit)
         command_row.addWidget(self._gallery_btn)
 
+        self._pin_btn = _make_btn("pin", "Keep editor on top", checkable=True)
+        self._pin_btn.setObjectName("commandButton")
+        self._pin_btn.setText("Pin")
+        self._pin_btn.setAccessibleName("Keep editor on top")
+        self._pin_btn.toggled.connect(self._on_pin_toggled)
+        command_row.addWidget(self._pin_btn)
+
         self._save_btn = _make_btn("save", "Save file (Ctrl+S)")
         self._save_btn.setObjectName("commandButton")
         self._save_btn.setText("Save")
@@ -708,7 +728,9 @@ class Toolbar(QWidget):
             Qt.ToolButtonStyle.ToolButtonIconOnly
             if compact else Qt.ToolButtonStyle.ToolButtonTextBesideIcon
         )
-        for button in (self._clipboard_btn, self._gallery_btn, self._save_btn):
+        for button in (
+            self._clipboard_btn, self._gallery_btn, self._pin_btn, self._save_btn,
+        ):
             button.setToolButtonStyle(style)
         self.update_scale(scale)
 
@@ -737,6 +759,12 @@ class Toolbar(QWidget):
         """Keep command affordances in sync with the canvas history."""
         self._undo_btn.setEnabled(can_undo)
         self._redo_btn.setEnabled(can_redo)
+
+    def _on_pin_toggled(self, enabled: bool):
+        self._pin_btn.setToolTip(
+            "Unpin editor from top" if enabled else "Keep editor on top"
+        )
+        self.always_on_top_changed.emit(enabled)
 
     def _on_tool_clicked(self, button: QToolButton):
         if button is self._shape_button:
@@ -829,6 +857,7 @@ class Toolbar(QWidget):
         for btn, width in (
             (self._clipboard_btn, 88),
             (self._gallery_btn, 96),
+            (self._pin_btn, 76),
             (self._save_btn, 80),
         ):
             if btn.toolButtonStyle() == Qt.ToolButtonStyle.ToolButtonTextBesideIcon:

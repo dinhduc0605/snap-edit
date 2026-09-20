@@ -13,14 +13,14 @@ from unittest.mock import patch
 import main  # Set the same physical-coordinate/DPI policy as the application.
 from PyQt6 import sip
 from PyQt6.QtCore import QEvent, QPoint, QPointF, QRect, QRectF, QSize, Qt
-from PyQt6.QtGui import QColor, QFont, QMouseEvent, QPixmap
+from PyQt6.QtGui import QColor, QContextMenuEvent, QFont, QMouseEvent, QPixmap
 from PyQt6.QtWidgets import QApplication, QToolButton
 from PyQt6.QtTest import QTest
 
 from capture.region import RegionSelector
 from capture.timed_region import TimedRegionSelector
 from editor.editor_window import EditorWindow
-from editor.canvas import TextSettingsPopup, ShapeSettingsPopup
+from editor.canvas import BubbleSettingsPopup, TextSettingsPopup, ShapeSettingsPopup
 from editor.toolbar import ToolType
 from editor.gallery_dialog import GalleryDialog
 from editor.items.arrow_item import ArrowItem
@@ -301,6 +301,79 @@ class DpiCaptureTests(unittest.TestCase):
         self.assertEqual(bubble.pos(), QPointF(68, 68))
         canvas.set_annotation_scale(1, 3, 14)
         self.assertEqual(bubble.scale(), 2)
+
+    def test_deleting_a_bubble_renumbers_later_bubbles_and_undo_restores_them(self):
+        canvas = self.editor()._canvas
+        bubbles = []
+        for index in range(4):
+            canvas._add_bubble(QPointF(80 + index * 40, 80))
+            bubbles.append(canvas._bubble_items_by_number()[-1])
+
+        bubbles[1].setSelected(True)
+        canvas.delete_selected()
+        self.assertNotIn(bubbles[1], canvas.get_annotation_items())
+        self.assertEqual(
+            [bubble.number for bubble in bubbles if bubble is not bubbles[1]],
+            [1, 2, 3],
+        )
+        self.assertEqual(canvas._bubble_counter, 3)
+
+        canvas.undo()
+        self.assertEqual([bubble.number for bubble in bubbles], [1, 2, 3, 4])
+        self.assertEqual(canvas._bubble_counter, 4)
+
+        canvas.redo()
+        canvas._add_bubble(QPointF(280, 80))
+        self.assertEqual(
+            [bubble.number for bubble in canvas._bubble_items_by_number()],
+            [1, 2, 3, 4],
+        )
+
+    def test_annotation_context_menu_opens_without_switching_to_select_mode(self):
+        editor = self.editor()
+        editor.show()
+        self.app.processEvents()
+        canvas = editor._canvas
+        canvas._add_bubble(QPointF(120, 100))
+        bubble = canvas._bubble_items_by_number()[0]
+        canvas.set_tool(ToolType.LINE)
+        viewport = editor._view.viewport()
+        position = editor._view.mapFromScene(
+            bubble.mapToScene(QPointF(16, 16))
+        )
+        event = QContextMenuEvent(
+            QContextMenuEvent.Reason.Mouse,
+            position,
+            viewport.mapToGlobal(position),
+        )
+
+        QApplication.sendEvent(viewport, event)
+        self.app.processEvents()
+
+        self.assertEqual(canvas._current_tool, ToolType.LINE)
+        self.assertTrue(bubble.isSelected())
+        self.assertIsInstance(canvas._settings_popup, BubbleSettingsPopup)
+
+    def test_pin_command_keeps_the_editor_above_other_windows(self):
+        editor = self.editor()
+        editor.show()
+        self.app.processEvents()
+        pin = editor._toolbar._pin_btn
+
+        pin.click()
+        self.app.processEvents()
+        self.assertTrue(pin.isChecked())
+        self.assertTrue(bool(
+            editor.windowFlags() & Qt.WindowType.WindowStaysOnTopHint
+        ))
+        self.assertEqual(pin.toolTip(), "Unpin editor from top")
+
+        pin.click()
+        self.app.processEvents()
+        self.assertFalse(pin.isChecked())
+        self.assertFalse(bool(
+            editor.windowFlags() & Qt.WindowType.WindowStaysOnTopHint
+        ))
 
     def test_prepared_editor_keeps_full_resolution_and_first_frame_fits(self):
         editor = self.editor()

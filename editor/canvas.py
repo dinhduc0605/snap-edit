@@ -125,13 +125,46 @@ class AddBubbleCommand(AddItemCommand):
 
     def redo(self):
         super().redo()
-        self._scene._bubble_counter = self._number
-        self._scene.bubble_count_changed.emit(self._number)
+        self._scene._set_bubble_count(self._number)
 
     def undo(self):
         super().undo()
-        self._scene._bubble_counter = self._number - 1
-        self._scene.bubble_count_changed.emit(self._scene._bubble_counter)
+        self._scene._set_bubble_count(self._number - 1)
+
+
+class RemoveBubbleCommand(QUndoCommand):
+    """Remove a bubble while keeping every remaining bubble consecutively numbered."""
+
+    def __init__(self, scene: 'AnnotationCanvas', item: QGraphicsItem):
+        super().__init__(f"Remove bubble #{item.number}")
+        self._scene = scene
+        self._item = item
+        self._numbers_before = [
+            (bubble, bubble.number) for bubble in scene._bubble_items_by_number()
+        ]
+        self._numbers_after = [
+            (bubble, number)
+            for number, bubble in enumerate(
+                (
+                    bubble for bubble, _number in self._numbers_before
+                    if bubble is not item
+                ),
+                start=1,
+            )
+        ]
+
+    def _apply_numbers(self, values):
+        for bubble, number in values:
+            bubble.number = number
+        self._scene._set_bubble_count(len(values))
+
+    def redo(self):
+        self._scene.removeItem(self._item)
+        self._apply_numbers(self._numbers_after)
+
+    def undo(self):
+        self._scene.addItem(self._item)
+        self._apply_numbers(self._numbers_before)
 
 
 class RemoveItemCommand(QUndoCommand):
@@ -696,10 +729,16 @@ class AnnotationCanvas(QGraphicsScene):
             self._undo_stack.redo()
 
     def delete_selected(self):
-        """Delete all selected annotation items."""
+        """Delete selected annotations and close gaps in bubble numbering."""
+        from editor.items.bubble_item import BubbleItem
+
         for item in self.selectedItems():
             if item is not self._background_item:
-                cmd = RemoveItemCommand(self, item, "Delete item")
+                cmd = (
+                    RemoveBubbleCommand(self, item)
+                    if isinstance(item, BubbleItem)
+                    else RemoveItemCommand(self, item, "Delete item")
+                )
                 self._undo_stack.push(cmd)
 
     def mousePressEvent(self, event):
@@ -920,11 +959,22 @@ class AnnotationCanvas(QGraphicsScene):
         return [item for item in self.items()
                 if item is not self._background_item and item is not self._ocr_overlay]
 
+    def _bubble_items_by_number(self) -> list:
+        """Return bubbles in their displayed order, independently of scene Z order."""
+        from editor.items.bubble_item import BubbleItem
+
+        return sorted(
+            (item for item in self.get_annotation_items() if isinstance(item, BubbleItem)),
+            key=lambda item: item.number,
+        )
+
+    def _set_bubble_count(self, count: int):
+        """Update the next-bubble counter and notify any interested chrome."""
+        self._bubble_counter = max(0, int(count))
+        self.bubble_count_changed.emit(self._bubble_counter)
+
     def contextMenuEvent(self, event):
-        """Show settings context menu on right-click over an item in Select mode."""
-        if self._current_tool != ToolType.SELECT:
-            super().contextMenuEvent(event)
-            return
+        """Show an annotation's settings on right-click in any editing mode."""
 
         from editor.items.text_item import TextItem
         from editor.items.rect_item import RectItem
@@ -934,17 +984,20 @@ class AnnotationCanvas(QGraphicsScene):
         from editor.items.bubble_item import BubbleItem
 
         pos = event.scenePos()
-        item = self.itemAt(pos, __import__('PyQt6.QtGui', fromlist=['QTransform']).QTransform())
+        item = self.itemAt(pos, QTransform())
 
         if isinstance(item, TextItem):
+            self.clearSelection()
             item.setSelected(True)
             self._show_settings_popup(TextSettingsPopup, item, event)
             return
         elif isinstance(item, BubbleItem):
+            self.clearSelection()
             item.setSelected(True)
             self._show_settings_popup(BubbleSettingsPopup, item, event)
             return
         elif isinstance(item, (RectItem, EllipseItem, LineItem, ArrowItem)):
+            self.clearSelection()
             item.setSelected(True)
             self._show_settings_popup(ShapeSettingsPopup, item, event)
             return
